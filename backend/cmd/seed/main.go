@@ -1,13 +1,42 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
+	"os"
 
 	"github.com/incident-sage/backend/internal/database"
 	"github.com/incident-sage/backend/internal/models"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// UserData represents the structure of users in the JSON file
+type UserData struct {
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Role      string `json:"role"`
+}
+
+// IncidentData represents the structure of incidents in the JSON file
+type IncidentData struct {
+	Title         string   `json:"title"`
+	Description   string   `json:"description"`
+	Status        string   `json:"status"`
+	Priority      string   `json:"priority"`
+	Severity      string   `json:"severity"`
+	ReporterEmail string   `json:"reporterEmail"`
+	AssigneeEmail *string  `json:"assigneeEmail"`
+	Tags          []string `json:"tags"`
+}
+
+// JSONData represents the structure of the JSON files
+type JSONData struct {
+	Users     []UserData     `json:"users"`
+	Incidents []IncidentData `json:"incidents"`
+}
 
 func main() {
 	// Load environment variables
@@ -25,39 +54,65 @@ func main() {
 	// Seed database with sample data
 	log.Println("Seeding database with sample data...")
 
-	// Create admin user
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
-	adminUser := models.User{
-		Email:     "admin@incidentsage.com",
-		Password:  string(hashedPassword),
-		FirstName: "Admin",
-		LastName:  "User",
-		Role:      models.RoleAdmin,
+	// Load and create users from JSON
+	if err := seedUsers(); err != nil {
+		log.Printf("Error seeding users: %v", err)
 	}
 
-	// Create manager user
-	managerPassword, _ := bcrypt.GenerateFromPassword([]byte("manager123"), bcrypt.DefaultCost)
-	managerUser := models.User{
-		Email:     "manager@incidentsage.com",
-		Password:  string(managerPassword),
-		FirstName: "John",
-		LastName:  "Manager",
-		Role:      models.RoleManager,
+	// Load and create incidents from JSON
+	if err := seedIncidents(); err != nil {
+		log.Printf("Error seeding incidents: %v", err)
 	}
 
-	// Create responder user
-	responderPassword, _ := bcrypt.GenerateFromPassword([]byte("responder123"), bcrypt.DefaultCost)
-	responderUser := models.User{
-		Email:     "responder@incidentsage.com",
-		Password:  string(responderPassword),
-		FirstName: "Sarah",
-		LastName:  "Responder",
-		Role:      models.RoleResponder,
+	log.Println("✅ Database seeding completed successfully!")
+}
+
+func seedUsers() error {
+	// Read users JSON file
+	usersData, err := os.ReadFile("data/initial-users.json")
+	if err != nil {
+		return err
+	}
+
+	var jsonData JSONData
+	if err := json.Unmarshal(usersData, &jsonData); err != nil {
+		return err
 	}
 
 	// Create users
-	users := []models.User{adminUser, managerUser, responderUser}
-	for _, user := range users {
+	for _, userData := range jsonData.Users {
+		// Hash password
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(userData.Password), bcrypt.DefaultCost)
+		if err != nil {
+			log.Printf("Error hashing password for %s: %v", userData.Email, err)
+			continue
+		}
+
+		// Map role string to Role enum
+		var role models.UserRole
+		switch userData.Role {
+		case "admin":
+			role = models.RoleAdmin
+		case "manager":
+			role = models.RoleManager
+		case "responder":
+			role = models.RoleResponder
+		case "viewer":
+			role = models.RoleViewer
+		default:
+			log.Printf("Unknown role %s for user %s, defaulting to viewer", userData.Role, userData.Email)
+			role = models.RoleViewer
+		}
+
+		user := models.User{
+			Email:     userData.Email,
+			Password:  string(hashedPassword),
+			FirstName: userData.FirstName,
+			LastName:  userData.LastName,
+			Role:      role,
+		}
+
+		// Check if user already exists
 		var existingUser models.User
 		if err := database.DB.Where("email = ?", user.Email).First(&existingUser).Error; err != nil {
 			if err := database.DB.Create(&user).Error; err != nil {
@@ -70,41 +125,101 @@ func main() {
 		}
 	}
 
-	// Create sample incidents
-	sampleIncidents := []models.Incident{
-		{
-			Title:       "Server Outage - Production Environment",
-			Description: "Production servers are experiencing high latency and intermittent connectivity issues. Multiple users are reporting slow response times.",
-			Status:      models.StatusOpen,
-			Priority:    models.PriorityHigh,
-			Severity:    models.SeverityMajor,
-			ReporterID:  1, // Admin user
-			Tags:        []string{"server", "production", "latency"},
-		},
-		{
-			Title:       "Database Connection Pool Exhausted",
-			Description: "Application is unable to establish new database connections. Connection pool has reached maximum capacity.",
-			Status:      models.StatusInProgress,
-			Priority:    models.PriorityCritical,
-			Severity:    models.SeverityCritical,
-			ReporterID:  2,             // Manager user
-			AssigneeID:  &[]uint{3}[0], // Assign to responder
-			Tags:        []string{"database", "connection", "pool"},
-		},
-		{
-			Title:       "Security Alert - Failed Login Attempts",
-			Description: "Multiple failed login attempts detected from suspicious IP addresses. Potential brute force attack.",
-			Status:      models.StatusResolved,
-			Priority:    models.PriorityMedium,
-			Severity:    models.SeverityModerate,
-			ReporterID:  1,             // Admin user
-			AssigneeID:  &[]uint{2}[0], // Assign to manager
-			Tags:        []string{"security", "authentication", "brute-force"},
-		},
+	return nil
+}
+
+func seedIncidents() error {
+	// Read incidents JSON file
+	incidentsData, err := os.ReadFile("data/initial-incidents.json")
+	if err != nil {
+		return err
+	}
+
+	var jsonData JSONData
+	if err := json.Unmarshal(incidentsData, &jsonData); err != nil {
+		return err
 	}
 
 	// Create incidents
-	for _, incident := range sampleIncidents {
+	for _, incidentData := range jsonData.Incidents {
+		// Get reporter user ID
+		var reporter models.User
+		if err := database.DB.Where("email = ?", incidentData.ReporterEmail).First(&reporter).Error; err != nil {
+			log.Printf("Error finding reporter %s: %v", incidentData.ReporterEmail, err)
+			continue
+		}
+
+		// Get assignee user ID if specified
+		var assigneeID *uint
+		if incidentData.AssigneeEmail != nil {
+			var assignee models.User
+			if err := database.DB.Where("email = ?", *incidentData.AssigneeEmail).First(&assignee).Error; err != nil {
+				log.Printf("Error finding assignee %s: %v", *incidentData.AssigneeEmail, err)
+			} else {
+				assigneeID = &assignee.ID
+			}
+		}
+
+		// Map status string to Status enum
+		var status models.IncidentStatus
+		switch incidentData.Status {
+		case "open":
+			status = models.StatusOpen
+		case "in_progress":
+			status = models.StatusInProgress
+		case "resolved":
+			status = models.StatusResolved
+		case "closed":
+			status = models.StatusClosed
+		default:
+			log.Printf("Unknown status %s, defaulting to open", incidentData.Status)
+			status = models.StatusOpen
+		}
+
+		// Map priority string to Priority enum
+		var priority models.IncidentPriority
+		switch incidentData.Priority {
+		case "low":
+			priority = models.PriorityLow
+		case "medium":
+			priority = models.PriorityMedium
+		case "high":
+			priority = models.PriorityHigh
+		case "critical":
+			priority = models.PriorityCritical
+		default:
+			log.Printf("Unknown priority %s, defaulting to medium", incidentData.Priority)
+			priority = models.PriorityMedium
+		}
+
+		// Map severity string to Severity enum
+		var severity models.IncidentSeverity
+		switch incidentData.Severity {
+		case "minor":
+			severity = models.SeverityMinor
+		case "moderate":
+			severity = models.SeverityModerate
+		case "major":
+			severity = models.SeverityMajor
+		case "critical":
+			severity = models.SeverityCritical
+		default:
+			log.Printf("Unknown severity %s, defaulting to moderate", incidentData.Severity)
+			severity = models.SeverityModerate
+		}
+
+		incident := models.Incident{
+			Title:       incidentData.Title,
+			Description: incidentData.Description,
+			Status:      status,
+			Priority:    priority,
+			Severity:    severity,
+			ReporterID:  reporter.ID,
+			AssigneeID:  assigneeID,
+			Tags:        incidentData.Tags,
+		}
+
+		// Check if incident already exists
 		var existingIncident models.Incident
 		if err := database.DB.Where("title = ?", incident.Title).First(&existingIncident).Error; err != nil {
 			if err := database.DB.Create(&incident).Error; err != nil {
@@ -117,15 +232,5 @@ func main() {
 		}
 	}
 
-	log.Println("✅ Database seeding completed successfully!")
-	log.Println("")
-	log.Println("📋 Sample Users Created:")
-	log.Println("  Admin: admin@incidentsage.com / admin123")
-	log.Println("  Manager: manager@incidentsage.com / manager123")
-	log.Println("  Responder: responder@incidentsage.com / responder123")
-	log.Println("")
-	log.Println("🚨 Sample Incidents Created:")
-	log.Println("  - Server Outage (Open)")
-	log.Println("  - Database Connection Pool (In Progress)")
-	log.Println("  - Security Alert (Resolved)")
+	return nil
 }

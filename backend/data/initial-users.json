@@ -1,0 +1,32 @@
+{
+  "users": [
+    {
+      "email": "admin@incidentsage.com",
+      "password": "admin123",
+      "firstName": "Admin",
+      "lastName": "User",
+      "role": "admin"
+    },
+    {
+      "email": "manager@incidentsage.com",
+      "password": "manager123",
+      "firstName": "John",
+      "lastName": "Manager",
+      "role": "manager"
+    },
+    {
+      "email": "responder@incidentsage.com",
+      "password": "responder123",
+      "firstName": "Sarah",
+      "lastName": "Responder",
+      "role": "responder"
+    },
+    {
+      "email": "viewer@incidentsage.com",
+      "password": "viewer123",
+      "firstName": "Lisa",
+      "lastName": "Viewer",
+      "role": "viewer"
+    }
+  ]
+} 

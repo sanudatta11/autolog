@@ -13,8 +13,8 @@ A modern incident management and response platform designed to streamline incide
 
 ## 🏗️ Architecture
 
-- **Frontend**: React 18 + JavaScript + Vite
-- **Backend**: Go + Gin + GORM
+- **Frontend**: React 18 + JavaScript + Vite (with live reload)
+- **Backend**: Go + Gin + GORM (normal build)
 - **Database**: PostgreSQL
 - **Real-time**: WebSocket support
 - **Authentication**: JWT-based authentication
@@ -39,7 +39,7 @@ incident-sage/
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - Node.js 18+ 
 - PostgreSQL 14+
 - npm or yarn
@@ -64,15 +64,13 @@ incident-sage/
    cp frontend/.env.example frontend/.env
    ```
 
-4. **Database Setup**
+4. **Start Development Environment**
    ```bash
-   cd backend
-   go run cmd/migrate/main.go
-   ```
-
-5. **Start Development Servers**
-   ```bash
-   npm run dev
+   # Using Docker (recommended)
+   make docker-dev
+   
+   # Or locally
+   make dev
    ```
 
 ### Development
@@ -80,6 +78,69 @@ incident-sage/
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:8080
 - **Database**: PostgreSQL on localhost:5432
+- **Adminer**: http://localhost:8081 (Database management)
+
+## 🔐 Default Login Credentials
+
+The application comes with pre-configured users for testing:
+
+- **Admin**: `admin@incidentsage.com` / `admin123`
+- **Manager**: `manager@incidentsage.com` / `manager123`
+- **Responder**: `responder@incidentsage.com` / `responder123`
+- **Viewer**: `viewer@incidentsage.com` / `viewer123`
+
+## 🏥 Health Checks & Startup Order
+
+The application uses Docker's native health checks to ensure proper startup order:
+
+1. **Database** starts first with PostgreSQL health checks
+2. **Backend** waits for database to be healthy, then starts with health endpoint
+3. **Frontend** waits for backend to be healthy before starting
+
+### Health Endpoint
+
+The backend provides a detailed health endpoint at `http://localhost:8080/health`:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-01T12:00:00Z",
+  "version": "1.0.0",
+  "services": {
+    "database": {
+      "status": "ok",
+      "error": null
+    }
+  }
+}
+```
+
+### Health Check Commands
+
+```bash
+# Check all services
+make health
+
+# Check specific services
+make health-backend
+make health-frontend
+make health-db
+
+# Test health endpoint with detailed output
+make health-test
+make health-test-docker
+```
+
+**Note**: Docker automatically manages the startup order using health checks. If the backend is unhealthy, the frontend container will not start, preventing the `ERR_EMPTY_RESPONSE` error.
+
+## 🌱 Initial Data Configuration
+
+The application automatically seeds the database with initial users and sample incidents when starting in development mode. You can customize this data by editing the JSON files in `backend/data/`:
+
+- `backend/data/initial-users.json` - Initial user accounts
+- `backend/data/initial-incidents.json` - Sample incidents
+
+See `backend/data/README.md` for detailed configuration options.
 
 ## 📚 Available Scripts
 

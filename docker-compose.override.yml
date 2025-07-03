@@ -6,10 +6,6 @@ services:
     environment:
       ENV: development
       CORS_ORIGIN: http://localhost:5173
-    volumes:
-      - ./backend:/app
-      - backend_cache:/go
-      - /app/tmp
 
   # Development overrides for frontend
   frontend:
@@ -32,7 +28,4 @@ services:
     depends_on:
       - postgres
     networks:
-      - incident-sage-network
-
-volumes:
-  backend_cache: 
+      - incident-sage-network 

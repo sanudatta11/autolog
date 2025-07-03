@@ -18,6 +18,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - incident-sage-network
 
   # Go Backend with Live Reload
   backend:
@@ -36,12 +38,15 @@ services:
       CORS_ORIGIN: http://localhost:5173
       MAX_FILE_SIZE: 10485760
       UPLOAD_DIR: ./uploads
-    volumes:
-      - ./backend:/app
-      - backend_cache:/go
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - incident-sage-network
 
@@ -60,13 +65,13 @@ services:
       - ./frontend:/app
       - /app/node_modules
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - incident-sage-network
 
 volumes:
   postgres_data:
-  backend_cache:
 
 networks:
   incident-sage-network:

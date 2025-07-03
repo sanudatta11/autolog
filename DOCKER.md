@@ -33,7 +33,7 @@ docker-compose up -d
 
 ### Live Reload
 - **Frontend**: Vite provides instant hot reload for React changes
-- **Backend**: Air automatically rebuilds and restarts Go server on file changes
+- **Backend**: Normal Go build (rebuild container for changes)
 - **Database**: PostgreSQL with persistent volume
 
 ### Development Tools
@@ -52,6 +52,10 @@ docker-compose logs -f frontend
 
 # Restart a service
 docker-compose restart backend
+
+# Rebuild backend after code changes
+docker-compose build backend
+docker-compose up -d backend
 
 # Stop all services
 docker-compose down
@@ -127,7 +131,7 @@ docker-compose -f docker-compose.prod.yml --env-file .env up -d
 - **Volume**: postgres_data (persistent)
 
 ### Go Backend
-- **Development**: Uses Air for live reload
+- **Development**: Normal Go build (rebuild for changes)
 - **Production**: Multi-stage build with Alpine
 - **Port**: 8080
 - **Health Check**: /health endpoint

@@ -317,6 +317,16 @@ func CreateIncidentUpdate(c *gin.Context) {
 	incidentID := c.Param("id")
 	userID, _ := c.Get("user_id")
 
+	// Convert incidentID string to uint
+	incidentIDUint, err := strconv.ParseUint(incidentID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Invalid incident ID",
+		})
+		return
+	}
+
 	var req struct {
 		Content string `json:"content" binding:"required"`
 		Type    string `json:"type" binding:"required"`
@@ -349,7 +359,7 @@ func CreateIncidentUpdate(c *gin.Context) {
 	}
 
 	update := models.IncidentUpdate{
-		IncidentID: uint(incidentID),
+		IncidentID: uint(incidentIDUint),
 		UserID:     userID.(uint),
 		Content:    req.Content,
 		Type:       updateType,

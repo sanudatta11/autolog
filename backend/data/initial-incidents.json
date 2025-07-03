@@ -1,0 +1,54 @@
+{
+  "incidents": [
+    {
+      "title": "Server Outage - Production Environment",
+      "description": "Production servers are experiencing high latency and intermittent connectivity issues. Multiple users are reporting slow response times.",
+      "status": "open",
+      "priority": "high",
+      "severity": "major",
+      "reporterEmail": "admin@incidentsage.com",
+      "assigneeEmail": null,
+      "tags": ["server", "production", "latency"]
+    },
+    {
+      "title": "Database Connection Pool Exhausted",
+      "description": "Application is unable to establish new database connections. Connection pool has reached maximum capacity.",
+      "status": "in_progress",
+      "priority": "critical",
+      "severity": "critical",
+      "reporterEmail": "manager@incidentsage.com",
+      "assigneeEmail": "responder@incidentsage.com",
+      "tags": ["database", "connection", "pool"]
+    },
+    {
+      "title": "Security Alert - Failed Login Attempts",
+      "description": "Multiple failed login attempts detected from suspicious IP addresses. Potential brute force attack.",
+      "status": "resolved",
+      "priority": "medium",
+      "severity": "moderate",
+      "reporterEmail": "admin@incidentsage.com",
+      "assigneeEmail": "manager@incidentsage.com",
+      "tags": ["security", "authentication", "brute-force"]
+    },
+    {
+      "title": "API Rate Limiting Issues",
+      "description": "Third-party API integration is hitting rate limits, causing intermittent failures in external service calls.",
+      "status": "open",
+      "priority": "medium",
+      "severity": "minor",
+      "reporterEmail": "manager@incidentsage.com",
+      "assigneeEmail": null,
+      "tags": ["api", "rate-limiting", "integration"]
+    },
+    {
+      "title": "SSL Certificate Expiration Warning",
+      "description": "SSL certificate for production domain will expire in 7 days. Need to renew certificate before expiration.",
+      "status": "open",
+      "priority": "high",
+      "severity": "major",
+      "reporterEmail": "admin@incidentsage.com",
+      "assigneeEmail": "responder@incidentsage.com",
+      "tags": ["ssl", "certificate", "security"]
+    }
+  ]
+} 
