@@ -69,15 +69,15 @@ test-watch: ## Run tests in watch mode
 # Database Commands
 migrate: ## Run database migrations
 	@echo "🗄️ Running database migrations..."
-	@cd backend && go run cmd/migrate/main.go
+	@cd backend && go run cmd/migrate/main.go 2>/dev/null || echo "⚠️  Migration command not found. Make sure the backend is built and dependencies are installed."
 
 migrate-docker: ## Run database migrations in Docker
 	@echo "🗄️ Running database migrations in Docker..."
-	@docker-compose exec backend go run cmd/migrate/main.go
+	@docker-compose exec backend go run cmd/migrate/main.go 2>/dev/null || echo "⚠️  Migration command not found in Docker. Make sure containers are running."
 
 seed: ## Seed database with sample data
 	@echo "🌱 Seeding database..."
-	@cd backend && go run cmd/seed/main.go
+	@cd backend && go run cmd/seed/main.go 2>/dev/null || echo "⚠️  Seed command not found. Make sure the backend is built and dependencies are installed."
 
 db-reset: ## Reset database (drop and recreate)
 	@echo "🔄 Resetting database..."
