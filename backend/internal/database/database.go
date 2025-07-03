@@ -36,6 +36,9 @@ func AutoMigrate() {
 		&models.User{},
 		&models.Incident{},
 		&models.IncidentUpdate{},
+		&models.LogFile{},
+		&models.LogEntry{},
+		&models.LogAnalysis{},
 	)
 
 	if err != nil {

@@ -1,0 +1,324 @@
+package handlers
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/incident-sage/backend/internal/models"
+	"github.com/incident-sage/backend/internal/services"
+	"gorm.io/gorm"
+)
+
+// getUserIDFromContext extracts user ID from gin context
+func getUserIDFromContext(c *gin.Context) uint {
+	if userID, exists := c.Get("user_id"); exists {
+		if id, ok := userID.(uint); ok {
+			return id
+		}
+	}
+	return 0
+}
+
+type LogHandler struct {
+	db           *gorm.DB
+	logProcessor *services.LogProcessor
+	uploadDir    string
+}
+
+func NewLogHandler(db *gorm.DB, uploadDir string) *LogHandler {
+	return &LogHandler{
+		db:           db,
+		logProcessor: services.NewLogProcessor(db),
+		uploadDir:    uploadDir,
+	}
+}
+
+// UploadLogFile handles log file upload
+func (h *LogHandler) UploadLogFile(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	file, err := c.FormFile("logfile")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+		return
+	}
+
+	// Validate file extension
+	ext := filepath.Ext(file.Filename)
+	if ext != ".json" && ext != ".log" && ext != ".txt" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only JSON, LOG, and TXT files are supported"})
+		return
+	}
+
+	// Create upload directory if it doesn't exist
+	if err := os.MkdirAll(h.uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+		return
+	}
+
+	// Generate unique filename
+	timestamp := time.Now().Unix()
+	filename := fmt.Sprintf("%d_%s", timestamp, file.Filename)
+	filepath := filepath.Join(h.uploadDir, filename)
+
+	// Save file
+	if err := c.SaveUploadedFile(file, filepath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+
+	// Create log file record
+	logFile := models.LogFile{
+		Filename:   file.Filename,
+		Size:       file.Size,
+		UploadedBy: userID,
+		Status:     "pending",
+	}
+
+	if err := h.db.Create(&logFile).Error; err != nil {
+		// Clean up file if database save fails
+		os.Remove(filepath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save log file record"})
+		return
+	}
+
+	// Process log file in background
+	go func() {
+		if err := h.logProcessor.ProcessLogFile(logFile.ID, filepath); err != nil {
+			fmt.Printf("Failed to process log file %d: %v\n", logFile.ID, err)
+		}
+	}()
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Log file uploaded successfully",
+		"logFile": logFile,
+	})
+}
+
+// GetLogFiles returns all log files for the user
+func (h *LogHandler) GetLogFiles(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var logFiles []models.LogFile
+	query := h.db.Preload("Uploader").Where("uploaded_by = ?", userID).Order("created_at DESC")
+
+	// Add pagination
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	offset := (page - 1) * limit
+
+	query = query.Offset(offset).Limit(limit)
+
+	if err := query.Find(&logFiles).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log files"})
+		return
+	}
+
+	// Get total count
+	var total int64
+	h.db.Model(&models.LogFile{}).Where("uploaded_by = ?", userID).Count(&total)
+
+	c.JSON(http.StatusOK, gin.H{
+		"logFiles": logFiles,
+		"pagination": gin.H{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+		},
+	})
+}
+
+// GetLogFile returns a specific log file with its entries
+func (h *LogHandler) GetLogFile(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	var logFile models.LogFile
+	if err := h.db.Preload("Uploader").Preload("Entries").First(&logFile, logFileID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
+		}
+		return
+	}
+
+	// Check if user owns this log file
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"logFile": logFile})
+}
+
+// AnalyzeLogFile triggers analysis of a log file
+func (h *LogHandler) AnalyzeLogFile(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	// Check if user owns this log file
+	var logFile models.LogFile
+	if err := h.db.First(&logFile, logFileID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
+		}
+		return
+	}
+
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
+	// Perform analysis
+	analysis, err := h.logProcessor.AnalyzeLogFile(uint(logFileID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Analysis failed: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Log analysis completed",
+		"analysis": analysis,
+	})
+}
+
+// GetLogAnalyses returns all analyses for a log file
+func (h *LogHandler) GetLogAnalyses(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	// Check if user owns this log file
+	var logFile models.LogFile
+	if err := h.db.First(&logFile, logFileID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
+		}
+		return
+	}
+
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
+	var analyses []models.LogAnalysis
+	if err := h.db.Where("log_file_id = ?", logFileID).Order("created_at DESC").Find(&analyses).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch analyses"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"analyses": analyses})
+}
+
+// DeleteLogFile deletes a log file and its associated data
+func (h *LogHandler) DeleteLogFile(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	// Check if user owns this log file
+	var logFile models.LogFile
+	if err := h.db.First(&logFile, logFileID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
+		}
+		return
+	}
+
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
+	// Delete in transaction
+	tx := h.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Delete analyses
+	if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogAnalysis{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analyses"})
+		return
+	}
+
+	// Delete log entries
+	if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogEntry{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
+		return
+	}
+
+	// Delete log file
+	if err := tx.Delete(&logFile).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Log file deleted successfully"})
+}

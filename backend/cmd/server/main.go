@@ -135,6 +135,18 @@ func main() {
 				incidents.GET("/:id/updates", handlers.GetIncidentUpdates)
 				incidents.POST("/:id/updates", handlers.CreateIncidentUpdate)
 			}
+
+			// Logs
+			logHandler := handlers.NewLogHandler(database.DB, "uploads/logs")
+			logs := protected.Group("/logs")
+			{
+				logs.POST("/upload", logHandler.UploadLogFile)
+				logs.GET("/", logHandler.GetLogFiles)
+				logs.GET("/:id", logHandler.GetLogFile)
+				logs.POST("/:id/analyze", logHandler.AnalyzeLogFile)
+				logs.GET("/:id/analyses", logHandler.GetLogAnalyses)
+				logs.DELETE("/:id", logHandler.DeleteLogFile)
+			}
 		}
 	}
 
