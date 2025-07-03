@@ -13,6 +13,7 @@ import (
 	"github.com/incident-sage/backend/internal/handlers"
 	"github.com/incident-sage/backend/internal/middleware"
 	"github.com/incident-sage/backend/internal/models"
+	"github.com/incident-sage/backend/internal/services"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -75,6 +76,22 @@ func main() {
 			dbError = fmt.Errorf("database connection not initialized")
 		}
 
+		// Check LLM service
+		var llmStatus string
+		var llmError error
+
+		llmService := services.NewLLMService(
+			os.Getenv("OLLAMA_URL"),
+			os.Getenv("OLLAMA_MODEL"),
+		)
+
+		if err := llmService.CheckLLMHealth(); err != nil {
+			llmStatus = "error"
+			llmError = err
+		} else {
+			llmStatus = "ok"
+		}
+
 		// Determine overall health
 		overallStatus := "ok"
 		statusCode := 200
@@ -92,6 +109,10 @@ func main() {
 				"database": gin.H{
 					"status": dbStatus,
 					"error":  dbError,
+				},
+				"llm": gin.H{
+					"status": llmStatus,
+					"error":  llmError,
 				},
 			},
 		}
@@ -136,8 +157,14 @@ func main() {
 				incidents.POST("/:id/updates", handlers.CreateIncidentUpdate)
 			}
 
+			// Initialize LLM service
+			llmService := services.NewLLMService(
+				os.Getenv("OLLAMA_URL"),
+				os.Getenv("OLLAMA_MODEL"),
+			)
+
 			// Logs
-			logHandler := handlers.NewLogHandler(database.DB, "uploads/logs")
+			logHandler := handlers.NewLogHandler(database.DB, "uploads/logs", llmService)
 			logs := protected.Group("/logs")
 			{
 				logs.POST("/upload", logHandler.UploadLogFile)

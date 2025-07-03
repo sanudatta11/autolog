@@ -15,7 +15,8 @@ import (
 )
 
 type LogProcessor struct {
-	db *gorm.DB
+	db         *gorm.DB
+	llmService *LLMService
 }
 
 type JSONLogEntry struct {
@@ -30,8 +31,11 @@ type JSONLogEntry struct {
 	Data     map[string]interface{} `json:"data,omitempty"`
 }
 
-func NewLogProcessor(db *gorm.DB) *LogProcessor {
-	return &LogProcessor{db: db}
+func NewLogProcessor(db *gorm.DB, llmService *LLMService) *LogProcessor {
+	return &LogProcessor{
+		db:         db,
+		llmService: llmService,
+	}
 }
 
 func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
@@ -210,7 +214,7 @@ func (lp *LogProcessor) updateLogFileStatus(logFileID uint, status string) {
 	lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", status)
 }
 
-// AnalyzeLogFile performs basic incident detection on a processed log file
+// AnalyzeLogFile performs AI-powered incident detection on a processed log file
 func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, error) {
 	var logFile models.LogFile
 	if err := lp.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
@@ -233,11 +237,32 @@ func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, err
 		analysis.EndTime = logFile.Entries[len(logFile.Entries)-1].Timestamp
 	}
 
-	// Determine severity based on error patterns
-	analysis.Severity = lp.determineSeverity(logFile.Entries)
+	// Use AI-powered analysis if LLM service is available
+	if lp.llmService != nil {
+		aiAnalysis, err := lp.llmService.AnalyzeLogsWithAI(logFile, logFile.Entries)
+		if err != nil {
+			log.Printf("AI analysis failed, falling back to basic analysis: %v", err)
+			// Fallback to basic analysis
+			analysis.Severity = lp.determineSeverity(logFile.Entries)
+			analysis.Summary = lp.generateSummary(logFile)
+		} else {
+			// Use AI-generated analysis
+			analysis.Severity = aiAnalysis.Severity
+			analysis.Summary = aiAnalysis.Summary
 
-	// Generate basic summary
-	analysis.Summary = lp.generateSummary(logFile)
+			// Add root cause and recommendations to metadata
+			analysis.Metadata = map[string]interface{}{
+				"rootCause":       aiAnalysis.RootCause,
+				"recommendations": aiAnalysis.Recommendations,
+				"incidentType":    aiAnalysis.IncidentType,
+				"aiGenerated":     true,
+			}
+		}
+	} else {
+		// Fallback to basic analysis when LLM service is not available
+		analysis.Severity = lp.determineSeverity(logFile.Entries)
+		analysis.Summary = lp.generateSummary(logFile)
+	}
 
 	// Save analysis
 	if err := lp.db.Create(analysis).Error; err != nil {

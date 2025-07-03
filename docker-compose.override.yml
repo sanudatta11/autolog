@@ -6,6 +6,10 @@ services:
     environment:
       ENV: development
       CORS_ORIGIN: http://localhost:5173
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/incidentsage?sslmode=disable
+      JWT_SECRET: your-secret-key-change-in-production
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama2
 
   # Development overrides for frontend
   frontend:

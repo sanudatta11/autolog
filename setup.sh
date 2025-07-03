@@ -1,7 +1,15 @@
 #!/bin/bash
 
+# Fix PATH for WSL to find Go installation
+export PATH="$PATH:/mnt/c/Program Files/Go/bin"
+
 echo "🚀 Setting up IncidentSage Project"
 echo "=================================="
+
+echo "DEBUG: PATH is: $PATH"
+echo "DEBUG: which go: $(which go)"
+echo "DEBUG: go version output:"
+go version
 
 # Check if Go is installed
 if ! command -v go &> /dev/null; then

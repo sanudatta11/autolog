@@ -1,13 +1,45 @@
 # IncidentSage Makefile
 # Essential commands for development and deployment
 
-.PHONY: help dev docker-dev docker-clean logs shell health status clean setup
+.PHONY: help dev docker-dev docker-clean logs shell health status clean setup setup-full setup-ollama ollama-status ollama-pull test-ai rebuild-backend rebuild-frontend rebuild-all restart-all
 
 # Default target
 help: ## Show this help message
 	@echo "🚀 IncidentSage - Essential Commands"
 	@echo "===================================="
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "📋 Development Commands:"
+	@echo "  dev              Start development environment with Docker"
+	@echo "  docker-dev       Start development environment with Docker in background"
+	@echo "  rebuild-backend  Rebuild backend container"
+	@echo "  rebuild-frontend Rebuild frontend container"
+	@echo "  rebuild-all      Rebuild all application containers"
+	@echo "  restart-all      Restart all services (after code changes)"
+	@echo "  docker-clean     Clean up Docker containers, images, and volumes"
+	@echo ""
+	@echo "🤖 AI/LLM Commands:"
+	@echo "  setup-ollama     Setup Ollama for local LLM functionality"
+	@echo "  setup-full       Complete setup including Ollama LLM"
+	@echo "  ollama-status    Check Ollama service status"
+	@echo "  ollama-pull      Pull default LLM model (llama2)"
+	@echo "  test-ai          Test AI functionality with sample log"
+	@echo ""
+	@echo "📊 Monitoring Commands:"
+	@echo "  logs             Show Docker logs"
+	@echo "  shell            Access backend container shell"
+	@echo "  status           Show service status"
+	@echo "  health           Check application health"
+	@echo ""
+	@echo "🔧 Utility Commands:"
+	@echo "  clean            Clean build artifacts"
+	@echo "  setup            Initial project setup"
+	@echo "  adminer          Open Adminer in browser"
+	@echo "  urls             Show all service URLs"
+	@echo ""
+	@echo "💡 Quick Start:"
+	@echo "  1. make setup-full    # Complete setup with AI"
+	@echo "  2. make dev           # Start the application"
+	@echo "  3. make health        # Check all services"
 
 # Development Commands
 dev: ## Start development environment with Docker
@@ -17,6 +49,26 @@ dev: ## Start development environment with Docker
 docker-dev: ## Start development environment with Docker in background
 	@echo "🐳 Starting Docker development environment in background..."
 	@docker-compose up -d
+
+# Rebuild Commands
+rebuild-backend: ## Rebuild backend container
+	@echo "🔨 Rebuilding backend container..."
+	@docker-compose build backend
+	@docker-compose up -d backend
+
+rebuild-frontend: ## Rebuild frontend container
+	@echo "🔨 Rebuilding frontend container..."
+	@docker-compose build frontend
+	@docker-compose up -d frontend
+
+rebuild-all: ## Rebuild all application containers
+	@echo "🔨 Rebuilding all application containers..."
+	@docker-compose build backend frontend
+	@docker-compose up -d backend frontend
+
+restart-all: ## Restart all services (useful after code changes)
+	@echo "🔄 Restarting all services..."
+	@docker-compose restart backend frontend
 
 docker-clean: ## Clean up Docker containers, images, and volumes
 	@echo "🧹 Cleaning up Docker resources..."
@@ -39,9 +91,11 @@ health: ## Check application health
 	@echo "🔍 Checking backend health..."
 	@curl -s -f http://localhost:8080/health | jq . 2>/dev/null || echo "Backend: ❌ (Not responding or unhealthy)"
 	@echo "🔍 Checking frontend availability..."
-	@curl -s -f http://localhost:5173 > /dev/null && echo "Frontend: ✅" || echo "Frontend: ❌ (Not responding)"
+	@curl -s -f http://localhost:3000 > /dev/null && echo "Frontend: ✅" || echo "Frontend: ❌ (Not responding)"
 	@echo "🔍 Checking database connectivity..."
 	@docker-compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1 && echo "Database: ✅" || echo "Database: ❌ (Not responding)"
+	@echo "🔍 Checking Ollama LLM service..."
+	@curl -s http://localhost:11434/api/tags > /dev/null 2>&1 && echo "Ollama: ✅" || echo "Ollama: ❌ (Not running - run 'make setup-ollama')"
 
 # Utility Commands
 clean: ## Clean build artifacts
@@ -53,8 +107,72 @@ clean: ## Clean build artifacts
 
 setup: ## Initial project setup
 	@echo "🚀 Setting up IncidentSage project..."
-	@chmod +x setup.sh
-	@./setup.sh
+ifeq ($(OS),Windows_NT)
+	@powershell -ExecutionPolicy Bypass -File setup.ps1
+else
+	- chmod +x setup.sh
+	@bash ./setup.sh
+endif
+
+setup-full: ## Complete setup including Ollama LLM
+	@echo "🚀 Setting up IncidentSage with AI capabilities..."
+ifeq ($(OS),Windows_NT)
+	@powershell -ExecutionPolicy Bypass -File setup.ps1
+	@echo ""
+	@echo "🤖 Setting up Ollama for AI-powered log analysis..."
+	@powershell -ExecutionPolicy Bypass -File setup-ollama.ps1
+else
+	- chmod +x setup.sh
+	@bash ./setup.sh
+	@echo ""
+	@echo "🤖 Setting up Ollama for AI-powered log analysis..."
+	- chmod +x setup-ollama.sh
+	@bash ./setup-ollama.sh
+endif
+	@echo ""
+	@echo "🎉 Complete setup finished!"
+	@echo "💡 Run 'make dev' to start the application"
+
+# Ollama LLM Setup Commands
+setup-ollama: ## Setup Ollama for local LLM functionality
+	@echo "🤖 Setting up Ollama for AI-powered log analysis..."
+	- chmod +x setup-ollama.sh
+	@bash ./setup-ollama.sh
+
+ollama-status: ## Check Ollama service status
+	@echo "🔍 Checking Ollama status..."
+	@if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then \
+		echo "✅ Ollama is running"; \
+		echo "📋 Available models:"; \
+		curl -s http://localhost:11434/api/tags | jq -r '.models[].name' 2>/dev/null || echo "   No models found"; \
+	else \
+		echo "❌ Ollama is not running"; \
+		echo "💡 Run 'make setup-ollama' to install and start Ollama"; \
+	fi
+
+ollama-pull: ## Pull default LLM model (llama2)
+	@echo "📥 Pulling Llama2 model for AI analysis..."
+	@if command -v ollama > /dev/null; then \
+		ollama pull llama2; \
+		echo "✅ Llama2 model ready for use"; \
+	else \
+		echo "❌ Ollama not found. Run 'make setup-ollama' first"; \
+	fi
+
+test-ai: ## Test AI functionality with sample log
+	@echo "🧪 Testing AI-powered log analysis..."
+	@if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then \
+		echo "✅ Ollama is running"; \
+		echo "📝 Testing with sample log analysis..."; \
+		echo '{"timestamp": "2024-01-15T10:30:00Z", "level": "ERROR", "message": "Database connection failed"}' | \
+		curl -s -X POST http://localhost:11434/api/generate \
+			-H "Content-Type: application/json" \
+			-d '{"model": "llama2", "prompt": "Analyze this log entry: {\"timestamp\": \"2024-01-15T10:30:00Z\", \"level\": \"ERROR\", \"message\": \"Database connection failed\"}. Provide a brief analysis in JSON format with severity and summary.", "stream": false}' | \
+		jq -r '.response' 2>/dev/null || echo "   Test completed (response may be truncated)"; \
+		echo "✅ AI test completed"; \
+	else \
+		echo "❌ Ollama not running. Run 'make setup-ollama' first"; \
+	fi
 
 # Development Tools
 adminer: ## Open Adminer in browser
@@ -62,6 +180,7 @@ adminer: ## Open Adminer in browser
 	@open http://localhost:8081 || xdg-open http://localhost:8081 || echo "Please open http://localhost:8081 in your browser"
 
 urls: ## Show all service URLs
-	@echo "🌐 Frontend: http://localhost:5173"
+	@echo "🌐 Frontend: http://localhost:3000"
 	@echo "🔧 Backend: http://localhost:8080"
-	@echo "🗄️ Adminer: http://localhost:8081" 
+	@echo "🗄️ Adminer: http://localhost:8081"
+	@echo "🤖 Ollama: http://localhost:11434" 

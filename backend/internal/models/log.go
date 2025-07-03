@@ -60,6 +60,7 @@ type LogAnalysis struct {
 	Severity     string         `json:"severity"` // low, medium, high, critical
 	ErrorCount   int            `json:"errorCount"`
 	WarningCount int            `json:"warningCount"`
+	Metadata     map[string]any `json:"metadata" gorm:"type:jsonb"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	UpdatedAt    time.Time      `json:"updatedAt"`
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`

@@ -35,6 +35,8 @@ services:
       CORS_ORIGIN: http://localhost:3000
       ENV: development
       PORT: 8080
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama2
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,6 +48,25 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - incident-sage-network
+
+  # Local LLM Service (Ollama)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: incident-sage-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - incident-sage-network
 
@@ -70,6 +91,7 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:
 
 networks:
   incident-sage-network:

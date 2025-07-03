@@ -27,13 +27,15 @@ func getUserIDFromContext(c *gin.Context) uint {
 type LogHandler struct {
 	db           *gorm.DB
 	logProcessor *services.LogProcessor
+	llmService   *services.LLMService
 	uploadDir    string
 }
 
-func NewLogHandler(db *gorm.DB, uploadDir string) *LogHandler {
+func NewLogHandler(db *gorm.DB, uploadDir string, llmService *services.LLMService) *LogHandler {
 	return &LogHandler{
 		db:           db,
-		logProcessor: services.NewLogProcessor(db),
+		logProcessor: services.NewLogProcessor(db, llmService),
+		llmService:   llmService,
 		uploadDir:    uploadDir,
 	}
 }

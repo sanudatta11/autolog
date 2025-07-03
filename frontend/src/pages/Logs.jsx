@@ -237,26 +237,60 @@ const Logs = () => {
             Log Details: {selectedLogFile.filename}
           </h2>
           
-          {/* Analyses */}
-          {analyses.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-lg font-medium mb-3">Analyses</h3>
-              {analyses.map((analysis) => (
-                <div key={analysis.id} className="border border-gray-200 rounded p-4 mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium">Severity: {analysis.severity}</span>
-                    <span className="text-sm text-gray-600">
-                      {new Date(analysis.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-gray-700">{analysis.summary}</p>
-                  <div className="text-sm text-gray-600 mt-2">
-                    Errors: {analysis.errorCount} | Warnings: {analysis.warningCount}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                     {/* Analyses */}
+           {analyses.length > 0 && (
+             <div className="mb-6">
+               <h3 className="text-lg font-medium mb-3">Analyses</h3>
+               {analyses.map((analysis) => (
+                 <div key={analysis.id} className="border border-gray-200 rounded p-4 mb-3">
+                   <div className="flex items-center justify-between mb-2">
+                     <div className="flex items-center space-x-4">
+                       <span className="font-medium">Severity: {analysis.severity}</span>
+                       {analysis.metadata?.aiGenerated && (
+                         <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                           AI Generated
+                         </span>
+                       )}
+                     </div>
+                     <span className="text-sm text-gray-600">
+                       {new Date(analysis.createdAt).toLocaleString()}
+                     </span>
+                   </div>
+                   <p className="text-gray-700 mb-3">{analysis.summary}</p>
+                   
+                   {/* AI-generated details */}
+                   {analysis.metadata?.rootCause && (
+                     <div className="mb-3">
+                       <h4 className="font-medium text-sm text-gray-800 mb-1">Root Cause:</h4>
+                       <p className="text-sm text-gray-600">{analysis.metadata.rootCause}</p>
+                     </div>
+                   )}
+                   
+                   {analysis.metadata?.recommendations && analysis.metadata.recommendations.length > 0 && (
+                     <div className="mb-3">
+                       <h4 className="font-medium text-sm text-gray-800 mb-1">Recommendations:</h4>
+                       <ul className="text-sm text-gray-600 list-disc list-inside">
+                         {analysis.metadata.recommendations.map((rec, index) => (
+                           <li key={index}>{rec}</li>
+                         ))}
+                       </ul>
+                     </div>
+                   )}
+                   
+                   {analysis.metadata?.incidentType && (
+                     <div className="mb-3">
+                       <h4 className="font-medium text-sm text-gray-800 mb-1">Incident Type:</h4>
+                       <p className="text-sm text-gray-600">{analysis.metadata.incidentType}</p>
+                     </div>
+                   )}
+                   
+                   <div className="text-sm text-gray-600 mt-2">
+                     Errors: {analysis.errorCount} | Warnings: {analysis.warningCount}
+                   </div>
+                 </div>
+               ))}
+             </div>
+           )}
 
           {/* Log Entries */}
           <h3 className="text-lg font-medium mb-3">Log Entries</h3>
