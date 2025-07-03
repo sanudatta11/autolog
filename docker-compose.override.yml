@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Development overrides for backend
+  backend:
+    environment:
+      ENV: development
+      CORS_ORIGIN: http://localhost:5173
+    volumes:
+      - ./backend:/app
+      - backend_cache:/go
+      - /app/tmp
+
+  # Development overrides for frontend
+  frontend:
+    environment:
+      VITE_API_URL: http://localhost:8080
+      VITE_WS_URL: ws://localhost:8080
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+
+  # Add development tools
+  adminer:
+    image: adminer:latest
+    container_name: incident-sage-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+    networks:
+      - incident-sage-network
+
+volumes:
+  backend_cache: 

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: incident-sage-db
+    environment:
+      POSTGRES_DB: incident_sage
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Go Backend with Live Reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: incident-sage-backend
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/incident_sage
+      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production
+      JWT_EXPIRY: 24h
+      PORT: 8080
+      ENV: development
+      CORS_ORIGIN: http://localhost:5173
+      MAX_FILE_SIZE: 10485760
+      UPLOAD_DIR: ./uploads
+    volumes:
+      - ./backend:/app
+      - backend_cache:/go
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - incident-sage-network
+
+  # React Frontend with Live Reload
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: incident-sage-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8080
+      VITE_WS_URL: ws://localhost:8080
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - incident-sage-network
+
+volumes:
+  postgres_data:
+  backend_cache:
+
+networks:
+  incident-sage-network:
+    driver: bridge 
