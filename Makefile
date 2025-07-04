@@ -1,7 +1,7 @@
 # AutoLog Makefile
 # Essential commands for development and deployment
 
-.PHONY: dev docker-dev docker-clean logs shell health status clean setup setup-full setup-ollama ollama-status ollama-pull test-ai rebuild-backend rebuild-frontend rebuild-all restart-all dev-local stop-services run-backend run-frontend build-and-up
+.PHONY: dev docker-dev docker-clean logs shell health status clean setup setup-full setup-ollama ollama-status ollama-pull test-ai rebuild-backend rebuild-frontend rebuild-all restart-all dev-local stop-services run-backend run-frontend build-and-up down clean-db
 
 
 	@echo "🚀 AutoLog - Essential Commands"
@@ -224,3 +224,9 @@ urls: ## Show all service URLs
 build-and-up: ## Build all images and start the full stack
 	docker-compose build
 	docker-compose up -d 
+
+down:
+	docker-compose down --volumes --remove-orphans
+
+clean-db:
+	docker volume rm postgres_data || true 

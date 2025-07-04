@@ -29,6 +29,10 @@ type Job struct {
 	UpdatedAt   time.Time      `json:"updatedAt"`
 	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
 
+	TotalChunks  int `json:"totalChunks" gorm:"default:0"`
+	FailedChunk  int `json:"failedChunk" gorm:"default:0"`
+	CurrentChunk int `json:"currentChunk" gorm:"default:0"`
+
 	// Relationship (optional, not a DB constraint)
 	LogFile *LogFile `json:"logFile,omitempty" gorm:"foreignKey:LogFileID;references:ID"`
 }

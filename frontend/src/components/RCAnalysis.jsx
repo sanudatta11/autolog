@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
+
+const POLL_INTERVAL = 2000;
 
 const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) => {
   const [jobId, setJobId] = useState(null);
@@ -7,25 +9,59 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [results, setResults] = useState(null);
-  const [polling, setPolling] = useState(false);
+  const [totalChunks, setTotalChunks] = useState(null);
+  const [failedChunk, setFailedChunk] = useState(null);
+  const pollingRef = useRef(null);
+  const [isCorrect, setIsCorrect] = useState(null);
+  const [correction, setCorrection] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [currentChunk, setCurrentChunk] = useState(null);
 
-  // On mount: if status is pending/running and no jobId, fetch the current RCA job and start polling
+  // Helper to poll job status
+  const pollJobStatus = (jobId) => {
+    api.get(`/jobs/${jobId}/status`).then(response => {
+      const job = response.data.job;
+      setStatus(job.status);
+      setProgress(job.progress);
+      setTotalChunks(response.data.totalChunks || job.totalChunks || null);
+      setFailedChunk(response.data.failedChunk || job.failedChunk || null);
+      setCurrentChunk(response.data.currentChunk || job.currentChunk || null);
+      if (job.status === 'completed') {
+        setResults(job.result);
+        clearInterval(pollingRef.current);
+        if (onAnalysisComplete) onAnalysisComplete(job.result);
+      } else if (job.status === 'failed') {
+        setError(job.error || 'RCA analysis failed');
+        clearInterval(pollingRef.current);
+      }
+    }).catch(() => {
+      setError('Failed to check job status');
+      clearInterval(pollingRef.current);
+    });
+  };
+
+  // On mount, always check for active RCA job and start polling if found
   useEffect(() => {
-    if ((status === 'pending' || status === 'running') && !jobId) {
-      api.get(`/logs/${logFileId}/analyses`).then(res => {
-        const jobs = res.data.analyses || [];
-        const activeJob = jobs.find(j => j.status === 'pending' || j.status === 'running');
-        if (activeJob) {
-          setJobId(activeJob.id);
-          setProgress(activeJob.progress || 0);
-          setPolling(true);
-          pollJobStatus(activeJob.id);
-        }
-      }).catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, jobId, logFileId]);
+    let cancelled = false;
+    api.get(`/logs/${logFileId}/analyses`).then(res => {
+      if (cancelled) return;
+      const jobs = res.data.analyses || [];
+      const activeJob = jobs.find(j => j.status === 'pending' || j.status === 'running');
+      if (activeJob) {
+        setJobId(activeJob.id);
+        setProgress(activeJob.progress || 0);
+        setStatus(activeJob.status);
+        pollingRef.current = setInterval(() => pollJobStatus(activeJob.id), POLL_INTERVAL);
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [logFileId]);
 
+  // When starting a new analysis, also start polling
   const startAnalysis = async () => {
     try {
       setStatus('pending');
@@ -35,42 +71,9 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       const response = await api.post(`/logs/${logFileId}/analyze`);
       setJobId(response.data.jobId);
       setStatus('pending');
-      setPolling(true);
-      
-      // Start polling for status
-      pollJobStatus(response.data.jobId);
+      pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to start RCA analysis');
-      setStatus('failed');
-    }
-  };
-
-  const pollJobStatus = async (jobId) => {
-    if (!polling) return;
-
-    try {
-      const response = await api.get(`/jobs/${jobId}/status`);
-      const job = response.data.job;
-      
-      setStatus(job.status);
-      setProgress(job.progress);
-      
-      if (job.status === 'completed') {
-        setPolling(false);
-        setResults(job.result);
-        if (onAnalysisComplete) {
-          onAnalysisComplete(job.result);
-        }
-      } else if (job.status === 'failed') {
-        setPolling(false);
-        setError(job.error || 'RCA analysis failed');
-      } else {
-        // Continue polling
-        setTimeout(() => pollJobStatus(jobId), 2000);
-      }
-    } catch (err) {
-      setPolling(false);
-      setError('Failed to check job status');
       setStatus('failed');
     }
   };
@@ -105,6 +108,22 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     }
   };
 
+  const handleFeedbackSubmit = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      await api.post('/feedback', {
+        analysisMemoryId: results?.analysisMemoryId || results?.id, // Use correct ID from RCA result
+        isCorrect,
+        correction,
+      });
+      setFeedbackSubmitted(true);
+    } catch (err) {
+      alert('Failed to submit feedback');
+    }
+    setIsSubmitting(false);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -119,9 +138,32 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         </div>
       </div>
 
+      {/* Show chunk info if available */}
+      {totalChunks && (
+        <div className="text-xs text-gray-500">Total Chunks: {totalChunks}</div>
+      )}
+      {failedChunk && status === 'failed' && (
+        <div className="text-xs text-red-600">Failed at chunk: {failedChunk}</div>
+      )}
+
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-md p-3">
           <p className="text-red-800 text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* Retry button if failed and failedChunk is set */}
+      {status === 'failed' && failedChunk && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+          <p className="text-yellow-800 text-sm mb-3">
+            RCA analysis failed at chunk {failedChunk}. You can retry the analysis.
+          </p>
+          <button
+            onClick={startAnalysis}
+            className="btn btn-primary"
+          >
+            Retry RCA Analysis
+          </button>
         </div>
       )}
 
@@ -157,6 +199,16 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
           <p className="text-blue-700 text-xs mt-2">
             This may take a few minutes. You can continue using the application.
           </p>
+          {status === 'running' && totalChunks && (
+            <div className="mb-2 text-sm text-gray-700">
+              Divided into {totalChunks} chunks.<br />
+              {currentChunk ? (
+                <>Processing chunk {currentChunk} of {totalChunks}...</>
+              ) : (
+                <>Preparing chunks...</>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -212,6 +264,52 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {status === 'completed' && results && (
+        <div className="mt-6 p-4 border rounded bg-gray-50">
+          <h3 className="font-semibold mb-2">Was this analysis correct?</h3>
+          <form onSubmit={handleFeedbackSubmit}>
+            <div className="mb-2">
+              <label>
+                <input
+                  type="radio"
+                  name="isCorrect"
+                  value="true"
+                  checked={isCorrect === true}
+                  onChange={() => setIsCorrect(true)}
+                /> Yes
+              </label>
+              <label className="ml-4">
+                <input
+                  type="radio"
+                  name="isCorrect"
+                  value="false"
+                  checked={isCorrect === false}
+                  onChange={() => setIsCorrect(false)}
+                /> No
+              </label>
+            </div>
+            <div className="mb-2">
+              <textarea
+                className="w-full border rounded p-2"
+                placeholder="Correction or comments (optional)"
+                value={correction}
+                onChange={e => setCorrection(e.target.value)}
+              />
+            </div>
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-4 py-2 rounded"
+              disabled={isSubmitting || isCorrect === null}
+            >
+              Submit Feedback
+            </button>
+            {feedbackSubmitted && (
+              <div className="text-green-700 mt-2">Thank you for your feedback!</div>
+            )}
+          </form>
         </div>
       )}
     </div>

@@ -195,12 +195,17 @@ func (lc *LogController) GetRCAJobStatus(c *gin.Context) {
 	}
 
 	// Check if user owns this log file
-	if job.LogFile.UploadedBy != userID.(uint) {
+	if job.LogFile != nil && job.LogFile.UploadedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"job": job})
+	c.JSON(http.StatusOK, gin.H{
+		"job":          job,
+		"totalChunks":  job.TotalChunks,
+		"failedChunk":  job.FailedChunk,
+		"currentChunk": job.CurrentChunk,
+	})
 }
 
 // GetRCAResults returns the RCA analysis results
@@ -472,13 +477,15 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 	var analyses []map[string]interface{}
 	for _, job := range jobs {
 		analysis := map[string]interface{}{
-			"id":        job.ID,
-			"logFileID": job.LogFileID,
-			"status":    job.Status,
-			"progress":  job.Progress,
-			"error":     job.Error,
-			"createdAt": job.CreatedAt,
-			"updatedAt": job.UpdatedAt,
+			"id":          job.ID,
+			"logFileID":   job.LogFileID,
+			"status":      job.Status,
+			"progress":    job.Progress,
+			"error":       job.Error,
+			"createdAt":   job.CreatedAt,
+			"updatedAt":   job.UpdatedAt,
+			"totalChunks": job.TotalChunks,
+			"failedChunk": job.FailedChunk,
 		}
 
 		// If job is completed, extract analysis results

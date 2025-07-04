@@ -79,18 +79,29 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 
 	// Perform RCA analysis in chunks with error tracking
 	var failedChunk int = -1
-	partials, err := js.performRCAAnalysisWithErrorTracking(job.LogFile, &failedChunk)
+	var totalChunks int
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID)
 	if err != nil {
 		log.Printf("RCA analysis failed: %v", err)
 		failMsg := err.Error()
 		if failedChunk > 0 {
 			failMsg = fmt.Sprintf("Chunk %d failed: %s", failedChunk, failMsg)
 		}
+		// Save failedChunk and totalChunks in job
+		js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+			"failed_chunk": failedChunk,
+			"total_chunks": totalChunks,
+		})
 		js.updateJobStatus(jobID, models.JobStatusFailed, failMsg, map[string]interface{}{
 			"failedChunk": failedChunk,
+			"totalChunks": totalChunks,
 		})
+		// Also mark the log file as failed
+		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
 		return
 	}
+	// Save totalChunks in job
+	js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", totalChunks)
 
 	// Store partial results in job.Result
 	result := map[string]interface{}{
@@ -114,6 +125,8 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 	if err != nil {
 		log.Printf("RCA aggregation failed: %v", err)
 		js.updateJobStatus(jobID, models.JobStatusFailed, err.Error(), nil)
+		// Also mark the log file as failed
+		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
 		return
 	}
 
@@ -141,8 +154,8 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 	log.Printf("RCA analysis completed for job %d", jobID)
 }
 
-// performRCAAnalysisWithErrorTracking is like performRCAAnalysis but tracks which chunk failed
-func (js *JobService) performRCAAnalysisWithErrorTracking(logFile *models.LogFile, failedChunk *int) ([]*LogAnalysisResponse, error) {
+// performRCAAnalysisWithErrorTrackingAndChunkCount is like performRCAAnalysisWithErrorTracking but also returns totalChunks and logs each chunk
+func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("failed to load log entries: %w", err)
@@ -159,14 +172,21 @@ func (js *JobService) performRCAAnalysisWithErrorTracking(logFile *models.LogFil
 		}
 		chunks = append(chunks, entries[i:end])
 	}
+	*totalChunks = len(chunks)
 	var partialResults []*LogAnalysisResponse
-	for idx, chunk := range chunks {
-		log.Printf("Analyzing chunk %d/%d (entries %d-%d)...", idx+1, len(chunks), idx*chunkSize+1, idx*chunkSize+len(chunk))
+	for i, chunk := range chunks {
+		currentChunk := i + 1
+		// Update currentChunk in the job
+		js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", currentChunk)
+		log.Printf("[RCA] Processing chunk %d/%d for job %d", currentChunk, *totalChunks, jobID)
+		log.Printf("[RCA] Analyzing chunk %d/%d (entries %d-%d) for job %d...", currentChunk, *totalChunks, i*chunkSize+1, i*chunkSize+len(chunk), jobID)
 		analysis, err := js.llmService.AnalyzeLogsWithAI(logFile, chunk)
 		if err != nil {
-			*failedChunk = idx + 1
-			return nil, fmt.Errorf("LLM analysis failed for chunk %d: %w", idx+1, err)
+			log.Printf("[RCA] Chunk %d failed: %v", currentChunk, err)
+			*failedChunk = currentChunk
+			return nil, fmt.Errorf("LLM analysis failed for chunk %d: %w", currentChunk, err)
 		}
+		log.Printf("[RCA] Chunk %d succeeded", currentChunk)
 		partialResults = append(partialResults, analysis)
 	}
 	return partialResults, nil
