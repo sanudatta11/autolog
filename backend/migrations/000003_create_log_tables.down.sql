@@ -1,6 +1,6 @@
 -- Drop indexes
 DROP INDEX IF EXISTS idx_log_analyses_severity;
-DROP INDEX IF EXISTS idx_log_analyses_incident_id;
+
 DROP INDEX IF EXISTS idx_log_analyses_log_file_id;
 DROP INDEX IF EXISTS idx_log_entries_level;
 DROP INDEX IF EXISTS idx_log_entries_timestamp;

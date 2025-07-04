@@ -32,7 +32,7 @@ CREATE TABLE log_entries (
 CREATE TABLE log_analyses (
     id SERIAL PRIMARY KEY,
     log_file_id INTEGER NOT NULL REFERENCES log_files(id) ON DELETE CASCADE,
-    incident_id INTEGER REFERENCES incidents(id) ON DELETE SET NULL,
+    
     start_time TIMESTAMP,
     end_time TIMESTAMP,
     summary TEXT,
@@ -52,5 +52,5 @@ CREATE INDEX idx_log_entries_log_file_id ON log_entries(log_file_id);
 CREATE INDEX idx_log_entries_timestamp ON log_entries(timestamp);
 CREATE INDEX idx_log_entries_level ON log_entries(level);
 CREATE INDEX idx_log_analyses_log_file_id ON log_analyses(log_file_id);
-CREATE INDEX idx_log_analyses_incident_id ON log_analyses(incident_id);
+
 CREATE INDEX idx_log_analyses_severity ON log_analyses(severity); 

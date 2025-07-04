@@ -169,37 +169,85 @@ const Logs = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-8">Log Analysis</h1>
+      <h1 className="text-3xl font-bold mb-8">Log Analysis & RCA</h1>
 
-      {/* Upload Section */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-        <h2 className="text-xl font-semibold mb-4">Upload Log File</h2>
-        <div className="flex items-center space-x-4">
-          <input
-            id="file-input"
-            type="file"
-            accept=".json,.log,.txt"
-            onChange={handleFileSelect}
-            className="border border-gray-300 rounded px-3 py-2 flex-1"
-          />
-          <button
-            onClick={handleUpload}
-            disabled={uploading || !selectedFile}
-            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
-          >
-            {uploading ? 'Uploading...' : 'Upload'}
-          </button>
-        </div>
-        {message && (
-          <div className="mt-4 p-3 bg-blue-100 text-blue-800 rounded">
-            {message}
+      {/* Log Sources Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* File Upload */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-semibold mb-4">📁 File Upload</h2>
+          <div className="flex items-center space-x-4">
+            <input
+              id="file-input"
+              type="file"
+              accept=".json,.log,.txt"
+              onChange={handleFileSelect}
+              className="border border-gray-300 rounded px-3 py-2 flex-1"
+            />
+            <button
+              onClick={handleUpload}
+              disabled={uploading || !selectedFile}
+              className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+            >
+              {uploading ? 'Uploading...' : 'Upload'}
+            </button>
           </div>
-        )}
+          {message && (
+            <div className="mt-4 p-3 bg-blue-100 text-blue-800 rounded">
+              {message}
+            </div>
+          )}
+        </div>
+
+        {/* Log Connectors */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-semibold mb-4">🔗 Log Connectors</h2>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3 border border-gray-200 rounded">
+              <div className="flex items-center">
+                <span className="text-2xl mr-3">☁️</span>
+                <div>
+                  <h3 className="font-medium">CloudWatch</h3>
+                  <p className="text-sm text-gray-600">AWS Logs Integration</p>
+                </div>
+              </div>
+              <button className="bg-orange-600 text-white px-4 py-2 rounded text-sm hover:bg-orange-700">
+                Configure
+              </button>
+            </div>
+            
+            <div className="flex items-center justify-between p-3 border border-gray-200 rounded">
+              <div className="flex items-center">
+                <span className="text-2xl mr-3">🔍</span>
+                <div>
+                  <h3 className="font-medium">Splunk</h3>
+                  <p className="text-sm text-gray-600">Enterprise Logs</p>
+                </div>
+              </div>
+              <button className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                Configure
+              </button>
+            </div>
+            
+            <div className="flex items-center justify-between p-3 border border-gray-200 rounded">
+              <div className="flex items-center">
+                <span className="text-2xl mr-3">📊</span>
+                <div>
+                  <h3 className="font-medium">Elasticsearch</h3>
+                  <p className="text-sm text-gray-600">Search & Analytics</p>
+                </div>
+              </div>
+              <button className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700">
+                Configure
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Log Files List */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-xl font-semibold mb-4">Log Files</h2>
+        <h2 className="text-xl font-semibold mb-4">📋 Log Analysis History</h2>
         
         {loading ? (
           <div className="text-center py-8">Loading...</div>
@@ -237,18 +285,18 @@ const Logs = () => {
                       View
                     </button>
                     {logFile.status === 'completed' && (
-                      <button
-                        onClick={() => handleAnalyze(logFile.id)}
-                        className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
-                      >
-                        Analyze
-                      </button>
+                                          <button
+                      onClick={() => handleAnalyze(logFile.id)}
+                      className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
+                    >
+                      Generate RCA
+                    </button>
                     )}
                     <button
                       onClick={() => handleShowLLMAnalysis(logFile)}
                       className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
                     >
-                      LLM Analysis
+                      View RCA
                     </button>
                     <button
                       onClick={() => handleDelete(logFile.id)}
@@ -333,12 +381,7 @@ const Logs = () => {
                        </ul>
                      </div>
                    )}
-                   {analysis.metadata?.incidentType && (
-                     <div className="mb-3">
-                       <h4 className="font-medium text-sm text-gray-800 mb-1">Incident Type:</h4>
-                       <p className="text-sm text-gray-600">{analysis.metadata.incidentType}</p>
-                     </div>
-                   )}
+
                    <div className="text-sm text-gray-600 mt-2">
                      Errors: {analysis.errorCount} | Warnings: {analysis.warningCount}
                    </div>
@@ -397,7 +440,7 @@ const Logs = () => {
               &times;
             </button>
             <h2 className="text-xl font-semibold mb-4">
-              LLM Analysis for: {llmModalLogFile?.filename}
+              Root Cause Analysis for: {llmModalLogFile?.filename}
             </h2>
             {llmModalAnalysis?.error ? (
               <div className="text-red-600">{llmModalAnalysis.error}</div>
@@ -448,11 +491,7 @@ const Logs = () => {
                     </ul>
                   </div>
                 )}
-                {llmModalAnalysis.metadata?.incidentType && (
-                  <div className="mb-2">
-                    <span className="font-medium">Incident Type:</span> {llmModalAnalysis.metadata.incidentType}
-                  </div>
-                )}
+
               </div>
             ) : (
               <div>No analysis found for this log file.</div>

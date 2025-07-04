@@ -35,7 +35,7 @@ function Login() {
             Sign in to AutoLog
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Incident Management Platform
+            Log Analysis & RCA Platform
           </p>
         </div>
         

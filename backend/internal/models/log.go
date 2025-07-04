@@ -79,8 +79,7 @@ type LogAnalysis struct {
 	ID           uint           `json:"id" gorm:"primaryKey"`
 	LogFileID    uint           `json:"logFileId" gorm:"not null"`
 	LogFile      LogFile        `json:"logFile" gorm:"foreignKey:LogFileID"`
-	IncidentID   *uint          `json:"incidentId"`
-	Incident     *Incident      `json:"incident,omitempty" gorm:"foreignKey:IncidentID"`
+
 	StartTime    time.Time      `json:"startTime"`
 	EndTime      time.Time      `json:"endTime"`
 	Summary      string         `json:"summary" gorm:"type:text"`

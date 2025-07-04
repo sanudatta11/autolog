@@ -55,7 +55,7 @@ echo "🔧 Creating environment files..."
 if [ ! -f backend/.env ]; then
     cat > backend/.env << EOF
 # Database Configuration
-DATABASE_URL=postgresql://postgres:password@localhost:5432/incident_sage
+DATABASE_URL=postgresql://postgres:password@localhost:5432/autolog
 
 # JWT Configuration
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
@@ -93,7 +93,7 @@ echo "🎉 Setup completed!"
 echo ""
 echo "Next steps:"
 echo "1. Update the DATABASE_URL in backend/.env with your PostgreSQL credentials"
-echo "2. Create the database: createdb incident_sage"
+echo "2. Create the database: createdb autolog"
 echo "3. Start the development servers: npm run dev"
 echo ""
 echo "The application will be available at:"

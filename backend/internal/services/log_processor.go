@@ -214,7 +214,7 @@ func (lp *LogProcessor) updateLogFileStatus(logFileID uint, status string) {
 	lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", status)
 }
 
-// AnalyzeLogFile performs AI-powered incident detection on a processed log file
+// AnalyzeLogFile performs AI-powered log analysis and RCA generation on a processed log file
 func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, error) {
 	var logFile models.LogFile
 	if err := lp.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
@@ -254,7 +254,7 @@ func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, err
 			analysis.Metadata = map[string]interface{}{
 				"rootCause":         aiAnalysis.RootCause,
 				"recommendations":   aiAnalysis.Recommendations,
-				"incidentType":      aiAnalysis.IncidentType,
+		
 				"errorAnalysis":     aiAnalysis.ErrorAnalysis,
 				"criticalErrors":    aiAnalysis.CriticalErrors,
 				"nonCriticalErrors": aiAnalysis.NonCriticalErrors,

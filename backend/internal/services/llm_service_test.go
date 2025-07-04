@@ -135,9 +135,7 @@ func TestGenerateNoErrorsAnalysis(t *testing.T) {
 		t.Errorf("Expected severity 'low', got '%s'", analysis.Severity)
 	}
 
-	if analysis.IncidentType != "No Incident" {
-		t.Errorf("Expected incident type 'No Incident', got '%s'", analysis.IncidentType)
-	}
+
 
 	if len(analysis.ErrorAnalysis) != 0 {
 		t.Errorf("Expected no error analysis, got %d", len(analysis.ErrorAnalysis))

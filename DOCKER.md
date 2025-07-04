@@ -126,7 +126,7 @@ docker-compose -f docker-compose.prod.yml --env-file .env up -d
 ### PostgreSQL Database
 - **Image**: postgres:15-alpine
 - **Port**: 5432
-- **Database**: incident_sage
+- **Database**: autolog
 - **Credentials**: postgres/password (dev) or from .env (prod)
 - **Volume**: postgres_data (persistent)
 
@@ -239,10 +239,10 @@ docker-compose logs -f --tail=100
 ### Database Backup
 ```bash
 # Create backup
-docker-compose exec postgres pg_dump -U postgres incident_sage > backup.sql
+docker-compose exec postgres pg_dump -U postgres autolog > backup.sql
 
 # Restore backup
-docker-compose exec -T postgres psql -U postgres incident_sage < backup.sql
+docker-compose exec -T postgres psql -U postgres autolog < backup.sql
 ```
 
 ## 🚀 Next Steps

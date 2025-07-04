@@ -8,8 +8,7 @@ function Layout() {
 
   const navigation = [
     { name: 'Dashboard', href: '/', icon: '📊' },
-    { name: 'Incidents', href: '/incidents', icon: '🚨' },
-    { name: 'Logs', href: '/logs', icon: '📋' },
+    { name: 'Log Analysis', href: '/logs', icon: '🔍' },
     { name: 'LLM Status', href: '/llm-status', icon: '🤖' },
     { name: 'Users', href: '/users', icon: '👥' },
   ]

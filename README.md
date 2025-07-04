@@ -1,14 +1,16 @@
 # AutoLog
 
-A modern incident management and response platform designed to streamline incident handling, improve team collaboration, and provide comprehensive incident lifecycle management.
+An advanced log analysis platform using LLM for Root Cause Analysis (RCA) and multi-source log integration. Designed to streamline log analysis, provide intelligent insights, and generate comprehensive RCA reports from various log sources including CloudWatch, Splunk, and more.
 
 ## 🚀 Features
 
-- **Incident Management**: Create, track, and manage incidents with full lifecycle support
-- **Real-time Collaboration**: Live updates and team communication during incidents
+- **Multi-Source Log Integration**: Connect to CloudWatch, Splunk, and other log sources
+- **LLM-Powered Analysis**: Advanced log analysis using Large Language Models
+- **Root Cause Analysis (RCA)**: Automated generation of comprehensive RCA reports
+- **Real-time Log Processing**: Live log ingestion and analysis
+- **Intelligent Insights**: AI-driven pattern recognition and anomaly detection
 - **Role-based Access Control**: Secure access management with different user roles
-- **Dashboard & Analytics**: Comprehensive reporting and incident metrics
-- **Integration Ready**: API-first design for easy third-party integrations
+- **Dashboard & Analytics**: Comprehensive reporting and log analytics
 - **Modern UI/UX**: Intuitive interface built with React
 
 ## 🏗️ Architecture
@@ -135,10 +137,9 @@ make health-test-docker
 
 ## 🌱 Initial Data Configuration
 
-The application automatically seeds the database with initial users and sample incidents when starting in development mode. You can customize this data by editing the JSON files in `backend/data/`:
+The application automatically seeds the database with initial users when starting in development mode. You can customize this data by editing the JSON files in `backend/data/`:
 
 - `backend/data/initial-users.json` - Initial user accounts
-- `backend/data/initial-incidents.json` - Sample incidents
 
 See `backend/data/README.md` for detailed configuration options.
 

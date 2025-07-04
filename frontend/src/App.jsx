@@ -4,9 +4,6 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import Incidents from './pages/Incidents'
-import IncidentDetail from './pages/IncidentDetail'
-import CreateIncident from './pages/CreateIncident'
 import Users from './pages/Users'
 import Logs from './pages/Logs'
 import LLMStatus from './pages/LLMStatus'
@@ -26,9 +23,6 @@ function AppRoutes() {
         </PrivateRoute>
       }>
         <Route index element={<Dashboard />} />
-        <Route path="incidents" element={<Incidents />} />
-        <Route path="incidents/new" element={<CreateIncident />} />
-        <Route path="incidents/:id" element={<IncidentDetail />} />
         <Route path="users" element={<Users />} />
         <Route path="logs" element={<Logs />} />
         <Route path="llm-status" element={<LLMStatus />} />

@@ -1,7 +1,7 @@
 {
   "name": "autolog",
   "version": "1.0.0",
-  "description": "Modern incident management and response platform",
+  "description": "Advanced log analysis platform using LLM for RCA and multi-source log integration",
   "private": true,
   "workspaces": [
     "frontend",
@@ -25,8 +25,11 @@
     "concurrently": "^8.2.2"
   },
   "keywords": [
-    "incident-management",
-    "response-platform",
+    "log-analysis",
+    "llm",
+    "rca",
+    "cloudwatch",
+    "splunk",
     "react",
     "golang"
   ],

@@ -73,7 +73,7 @@ Write-Host "🔧 Creating environment files..." -ForegroundColor Blue
 if (-not (Test-Path "backend\.env")) {
     @"
 # Database Configuration
-DATABASE_URL=postgresql://postgres:password@localhost:5432/incident_sage
+DATABASE_URL=postgresql://postgres:password@localhost:5432/autolog
 
 # JWT Configuration
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production

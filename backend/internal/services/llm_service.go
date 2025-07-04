@@ -47,7 +47,7 @@ type LogAnalysisResponse struct {
 	Severity          string                  `json:"severity"`
 	RootCause         string                  `json:"rootCause"`
 	Recommendations   []string                `json:"recommendations"`
-	IncidentType      string                  `json:"incidentType"`
+
 	ErrorAnalysis     []DetailedErrorAnalysis `json:"errorAnalysis"`
 	CriticalErrors    int                     `json:"criticalErrors"`
 	NonCriticalErrors int                     `json:"nonCriticalErrors"`
@@ -174,7 +174,7 @@ Perform a detailed Root Cause Analysis and provide your findings in the followin
   "severity": "low|medium|high|critical",
   "rootCause": "The primary root cause that explains most of the errors",
   "recommendations": ["specific_action1", "specific_action2", "specific_action3"],
-  "incidentType": "The type of incident (e.g., 'Database Connection Failure', 'API Authentication Error', 'Service Outage')",
+  
   "errorAnalysis": [
     {
       "errorPattern": "The pattern or category of this error (e.g., 'Database Connection Timeout', 'Authentication Failure')",
@@ -273,9 +273,7 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 	// Normalize severity
 	analysis.Severity = ls.normalizeSeverity(analysis.Severity)
 
-	if analysis.IncidentType == "" {
-		analysis.IncidentType = "System Error"
-	}
+
 
 	// Validate error analysis
 	if analysis.ErrorAnalysis == nil {
@@ -326,7 +324,7 @@ func (ls *LLMService) generateNoErrorsAnalysis(logFile models.LogFile) *LogAnaly
 		Severity:          "low",
 		RootCause:         "No errors detected",
 		Recommendations:   []string{"Continue monitoring for any new errors", "Review INFO and WARNING logs for potential issues"},
-		IncidentType:      "No Incident",
+
 		ErrorAnalysis:     []DetailedErrorAnalysis{},
 		CriticalErrors:    0,
 		NonCriticalErrors: 0,
@@ -354,7 +352,7 @@ func (ls *LLMService) generateFallbackErrorAnalysis(request LogAnalysisRequest, 
 		"Monitor system metrics during error periods",
 	}
 
-	incidentType := "System Error Investigation"
+
 
 	// Create basic error analysis
 	var errorAnalysis []DetailedErrorAnalysis
@@ -396,7 +394,7 @@ func (ls *LLMService) generateFallbackErrorAnalysis(request LogAnalysisRequest, 
 		Severity:          severity,
 		RootCause:         rootCause,
 		Recommendations:   recommendations,
-		IncidentType:      incidentType,
+
 		ErrorAnalysis:     errorAnalysis,
 		CriticalErrors:    criticalCount,
 		NonCriticalErrors: nonCriticalCount,

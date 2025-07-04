@@ -34,8 +34,7 @@ func Connect() {
 func AutoMigrate() {
 	err := DB.AutoMigrate(
 		&models.User{},
-		&models.Incident{},
-		&models.IncidentUpdate{},
+		
 		&models.LogFile{},
 		&models.LogEntry{},
 		&models.LogAnalysis{},
