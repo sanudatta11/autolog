@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+pandas
+logparser3
+python-multipart 

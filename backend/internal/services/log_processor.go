@@ -2,10 +2,15 @@ package services
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,8 +20,9 @@ import (
 )
 
 type LogProcessor struct {
-	db         *gorm.DB
-	llmService *LLMService
+	db           *gorm.DB
+	llmService   *LLMService
+	logparserURL string // Add logparser microservice URL
 }
 
 type JSONLogEntry struct {
@@ -32,12 +38,127 @@ type JSONLogEntry struct {
 }
 
 func NewLogProcessor(db *gorm.DB, llmService *LLMService) *LogProcessor {
+	logparserURL := os.Getenv("LOGPARSER_URL")
+	if logparserURL == "" {
+		logparserURL = "http://localhost:8000"
+	}
 	return &LogProcessor{
-		db:         db,
-		llmService: llmService,
+		db:           db,
+		llmService:   llmService,
+		logparserURL: logparserURL,
 	}
 }
 
+// Helper to call logparser microservice with a file and return structured logs
+func (lp *LogProcessor) callLogparserMicroservice(filePath string, logFormat string) ([]models.LogEntry, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file for logparser: %w", err)
+	}
+	defer file.Close()
+
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	fw, err := w.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, file); err != nil {
+		return nil, fmt.Errorf("failed to copy file: %w", err)
+	}
+	// Add log_format if provided
+	if logFormat != "" {
+		w.WriteField("log_format", logFormat)
+	}
+	w.Close()
+
+	req, err := http.NewRequest("POST", lp.logparserURL+"/parse", &b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("logparser microservice request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("logparser microservice returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var parsed []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("failed to decode logparser response: %w", err)
+	}
+
+	var entries []models.LogEntry
+	for _, item := range parsed {
+		var entry models.LogEntry
+		// Prefer canonical fields if present
+		if ts, ok := item["timestamp"]; ok {
+			if tstr, ok := ts.(string); ok {
+				if t, err := lp.parseTimestamp(tstr); err == nil {
+					entry.Timestamp = t
+				}
+			}
+		}
+		if lvl, ok := item["level"]; ok {
+			if lstr, ok := lvl.(string); ok {
+				entry.Level = lp.normalizeLogLevel(lstr)
+			}
+		}
+		if msg, ok := item["message"]; ok {
+			if mstr, ok := msg.(string); ok {
+				entry.Message = mstr
+			}
+		}
+		if raw, ok := item["rawData"]; ok {
+			if rstr, ok := raw.(string); ok {
+				entry.RawData = rstr
+			}
+		}
+		if meta, ok := item["metadata"]; ok {
+			if m, ok := meta.(map[string]interface{}); ok {
+				entry.Metadata = m
+			}
+		}
+		// Fallback to legacy fields if canonical not present
+		if entry.Timestamp.IsZero() {
+			if ts, ok := item["Date"]; ok {
+				if tstr, ok := ts.(string); ok {
+					if t, err := lp.parseTimestamp(tstr); err == nil {
+						entry.Timestamp = t
+					}
+				}
+			}
+		}
+		if entry.Level == "" {
+			if lvl, ok := item["Level"]; ok {
+				if lstr, ok := lvl.(string); ok {
+					entry.Level = lp.normalizeLogLevel(lstr)
+				}
+			}
+		}
+		if entry.Message == "" {
+			if msg, ok := item["Content"]; ok {
+				entry.Message = fmt.Sprintf("%v", msg)
+			}
+		}
+		if entry.RawData == "" {
+			entry.RawData = ""
+		}
+		if entry.Metadata == nil {
+			entry.Metadata = item
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// Update ProcessLogFile to use logparser microservice for non-JSON logs
 func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 	// Update status to processing
 	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", "processing").Error; err != nil {
@@ -56,36 +177,84 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 
 	scanner := bufio.NewScanner(file)
 	lineNumber := 0
+	isAllJSON := true
+	var nonJSONLines []string
+	const sampleLimit = 10
 
 	for scanner.Scan() {
 		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
-
 		if line == "" {
 			continue
 		}
-
-		entry, err := lp.parseLogLine(line)
+		_, err := lp.parseLogLine(line)
 		if err != nil {
-			log.Printf("Failed to parse line %d: %v", lineNumber, err)
-			continue
-		}
-
-		entry.LogFileID = logFileID
-		entries = append(entries, entry)
-
-		// Count errors and warnings
-		switch entry.Level {
-		case models.LogLevelError, models.LogLevelFatal:
-			errorCount++
-		case models.LogLevelWarning:
-			warningCount++
+			isAllJSON = false
+			if len(nonJSONLines) < sampleLimit {
+				nonJSONLines = append(nonJSONLines, line)
+			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		lp.updateLogFileStatus(logFileID, "failed")
 		return fmt.Errorf("error reading log file: %w", err)
+	}
+
+	if isAllJSON {
+		// Rewind file
+		file.Seek(0, 0)
+		scanner = bufio.NewScanner(file)
+		lineNumber = 0
+		for scanner.Scan() {
+			lineNumber++
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			entry, err := lp.parseLogLine(line)
+			if err != nil {
+				log.Printf("Failed to parse line %d: %v", lineNumber, err)
+				continue
+			}
+			entry.LogFileID = logFileID
+			entries = append(entries, entry)
+			switch entry.Level {
+			case models.LogLevelError, models.LogLevelFatal:
+				errorCount++
+			case models.LogLevelWarning:
+				warningCount++
+			}
+		}
+	} else {
+		// Infer log format from non-JSON samples using LLM
+		logFormat := ""
+		if len(nonJSONLines) > 0 {
+			var err error
+			logFormat, err = lp.llmService.InferLogFormatFromSamples(nonJSONLines)
+			if err != nil {
+				log.Printf("[LLM] Failed to infer log format: %v, falling back to default", err)
+				logFormat = ""
+			} else {
+				log.Printf("[LLM] Inferred log format: %s", logFormat)
+			}
+		}
+		parsedEntries, err := lp.callLogparserMicroservice(filePath, logFormat)
+		if err != nil {
+			lp.updateLogFileStatus(logFileID, "failed")
+			return fmt.Errorf("logparser microservice failed: %w", err)
+		}
+		for i := range parsedEntries {
+			parsedEntries[i].LogFileID = logFileID
+			// Count errors and warnings
+			switch parsedEntries[i].Level {
+			case models.LogLevelError, models.LogLevelFatal:
+				errorCount++
+			case models.LogLevelWarning:
+				warningCount++
+			}
+		}
+		entries = append(entries, parsedEntries...)
 	}
 
 	// Save entries in batches

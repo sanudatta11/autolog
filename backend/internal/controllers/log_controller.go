@@ -208,7 +208,7 @@ func (lc *LogController) GetRCAJobStatus(c *gin.Context) {
 	})
 }
 
-// GetRCAResults returns the RCA analysis results
+// GetRCAResults returns the RCA analysis results for a log file
 func (lc *LogController) GetRCAResults(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
@@ -224,7 +224,7 @@ func (lc *LogController) GetRCAResults(c *gin.Context) {
 
 	// Check if user owns this log file
 	var logFile models.LogFile
-	if err := lc.db.Preload("RCAAnalysisJob").First(&logFile, logFileID).Error; err != nil {
+	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
@@ -245,14 +245,20 @@ func (lc *LogController) GetRCAResults(c *gin.Context) {
 	}
 
 	// Get the completed job
-	if logFile.RCAAnalysisJob == nil {
+	if logFile.RCAAnalysisJobID == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "RCA analysis job not found"})
+		return
+	}
+
+	var job models.Job
+	if err := lc.db.First(&job, *logFile.RCAAnalysisJobID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "RCA analysis job not found"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"analysis": logFile.RCAAnalysisJob.Result,
-		"job":      logFile.RCAAnalysisJob,
+		"analysis": job.Result,
+		"job":      job,
 	})
 }
 
@@ -300,49 +306,37 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 		return
 	}
 
+	// Parse options from request body
+	type AnalyzeOptions struct {
+		Timeout  int  `json:"timeout"`
+		Chunking bool `json:"chunking"`
+	}
+	var opts AnalyzeOptions
+	if err := c.ShouldBindJSON(&opts); err != nil {
+		// fallback to defaults if not provided
+		opts.Timeout = 300
+		opts.Chunking = true
+	}
+
 	// Check if user owns this log file
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
-		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		return
+	}
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
 		return
 	}
 
-	if logFile.UploadedBy != userID.(uint) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-		return
-	}
-
-	// Check if log file is processed
-	if logFile.Status != "completed" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Log file not yet processed"})
-		return
-	}
-
-	// Check if RCA analysis is already in progress
-	if logFile.RCAAnalysisStatus == "pending" || logFile.RCAAnalysisStatus == "running" {
-		c.JSON(http.StatusConflict, gin.H{"error": "RCA analysis already in progress"})
-		return
-	}
-
-	// Create RCA analysis job
-	job, err := lc.jobService.CreateRCAAnalysisJob(uint(logFileID))
+	// Create and process RCA job with options
+	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create RCA analysis job: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Start background processing
-	go lc.jobService.ProcessRCAAnalysisJob(job.ID)
-
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "RCA analysis started",
-		"jobId":   job.ID,
-		"status":  "pending",
-	})
+	go lc.jobService.ProcessRCAAnalysisJobWithOptions(job.ID, opts.Timeout, opts.Chunking)
+	c.JSON(http.StatusAccepted, gin.H{"jobId": job.ID})
 }
 
 // GetDetailedErrorAnalysis returns detailed error analysis for a log file
@@ -637,4 +631,39 @@ func (lc *LogController) ExportAllFeedback(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"feedback": feedbacks})
+}
+
+// GetAllRCAJobs returns all RCA jobs for a given log file
+func (lc *LogController) GetAllRCAJobs(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("logFileId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	// Check if user owns this log file
+	var logFile models.LogFile
+	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		return
+	}
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
+		return
+	}
+
+	// Fetch all jobs for this log file, most recent first
+	var jobs []models.Job
+	if err := lc.db.Where("log_file_id = ?", logFileID).Order("created_at desc").Find(&jobs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch jobs"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
 }

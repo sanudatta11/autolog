@@ -57,6 +57,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB) {
 				logs.GET("/:id/rca-results", logController.GetRCAResults)
 				logs.DELETE("/:id", logController.DeleteLogFile)
 				logs.GET("", logController.GetLogFiles)
+				r.GET("/logs/:logFileId/jobs", logController.GetAllRCAJobs)
 			}
 
 			// RCA Jobs

@@ -17,6 +17,11 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [currentChunk, setCurrentChunk] = useState(null);
+  const [jobs, setJobs] = useState([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [llmTimeout, setLlmTimeout] = useState(300); // default 300 seconds
+  const [useChunking, setUseChunking] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Helper to poll job status
   const pollJobStatus = (jobId) => {
@@ -59,6 +64,24 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       cancelled = true;
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
+  }, [logFileId]);
+
+  // Fetch all RCA jobs for this log file
+  const fetchJobs = async () => {
+    setLoadingJobs(true);
+    try {
+      const response = await api.get(`/logs/${logFileId}/jobs`);
+      setJobs(response.data.jobs || []);
+    } catch (err) {
+      setJobs([]);
+    }
+    setLoadingJobs(false);
+  };
+
+  useEffect(() => {
+    if (logFileId) {
+      fetchJobs();
+    }
   }, [logFileId]);
 
   // When starting a new analysis, also start polling
@@ -120,6 +143,32 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       setFeedbackSubmitted(true);
     } catch (err) {
       alert('Failed to submit feedback');
+    }
+    setIsSubmitting(false);
+  };
+
+  // Handler to trigger a new RCA run
+  const handleNewRun = async () => {
+    setIsSubmitting(true);
+    setFeedbackSubmitted(false);
+    setError('');
+    try {
+      setStatus('pending');
+      setProgress(0);
+      
+      const response = await api.post(`/logs/${logFileId}/analyze`, {
+        timeout: llmTimeout,
+        chunking: useChunking,
+      });
+      
+      setJobId(response.data.jobId);
+      setStatus('pending');
+      pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      
+      fetchJobs();
+    } catch (err) {
+      setError('Failed to start new RCA analysis');
+      setStatus('failed');
     }
     setIsSubmitting(false);
   };
@@ -230,39 +279,59 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         <div className="bg-white border border-gray-200 rounded-md p-4">
           <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
           <div className="space-y-3">
-            {results.analysis && (
-              <>
-                <div>
-                  <h5 className="text-sm font-medium text-gray-700">Summary</h5>
-                  <p className="text-sm text-gray-600 mt-1">{results.analysis.summary}</p>
-                </div>
-                <div>
-                  <h5 className="text-sm font-medium text-gray-700">Root Cause</h5>
-                  <p className="text-sm text-gray-600 mt-1">{results.analysis.rootCause}</p>
-                </div>
-                <div>
-                  <h5 className="text-sm font-medium text-gray-700">Severity</h5>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    results.analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
-                    results.analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
-                    results.analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
-                    {results.analysis.severity}
-                  </span>
-                </div>
-                {results.analysis.recommendations && results.analysis.recommendations.length > 0 && (
+            {(() => {
+              // Use analysis.final if present, else analysis
+              const analysis = results.analysis?.final || results.analysis || results;
+              return (
+                <>
                   <div>
-                    <h5 className="text-sm font-medium text-gray-700">Recommendations</h5>
-                    <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
-                      {results.analysis.recommendations.map((rec, index) => (
-                        <li key={index}>{rec}</li>
-                      ))}
-                    </ul>
+                    <h5 className="text-sm font-medium text-gray-700">Summary</h5>
+                    <p className="text-sm text-gray-600 mt-1">{analysis.summary}</p>
                   </div>
-                )}
-              </>
-            )}
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">Root Cause</h5>
+                    <p className="text-sm text-gray-600 mt-1">{analysis.rootCause}</p>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">Severity</h5>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                      analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
+                      analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-green-100 text-green-800'
+                    }`}>
+                      {analysis.severity}
+                    </span>
+                  </div>
+                  {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
+                    <div>
+                      <h5 className="text-sm font-medium text-gray-700">Recommendations</h5>
+                      <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
+                        {analysis.recommendations.map((rec, index) => (
+                          <li key={index}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {/* Advanced: Raw LLM response */}
+                  {results.analysis?.rawLLMResponse && (
+                    <div className="mt-4">
+                      <button
+                        className="text-xs text-blue-600 underline"
+                        onClick={() => setShowAdvanced(v => !v)}
+                      >
+                        {showAdvanced ? 'Hide' : 'Show'} Advanced (Raw LLM Response)
+                      </button>
+                      {showAdvanced && (
+                        <pre className="mt-2 p-2 bg-gray-100 text-xs rounded overflow-x-auto max-h-64">
+                          {results.analysis.rawLLMResponse}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -312,6 +381,96 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
           </form>
         </div>
       )}
+
+      <div className="mt-8">
+        <h3 className="font-semibold mb-2">Start New RCA Analysis</h3>
+        <div className="mb-2">
+          <label className="mr-2 font-medium">LLM Timeout (seconds):</label>
+          <input
+            type="number"
+            min="30"
+            max="1800"
+            value={llmTimeout}
+            onChange={e => setLlmTimeout(Number(e.target.value))}
+            disabled={isSubmitting || status === 'running' || status === 'pending'}
+            className="border rounded px-2 py-1 w-24"
+          />
+        </div>
+        <div className="mb-2">
+          <span className="font-medium mr-2">Chunking:</span>
+          <label className="mr-4">
+            <input
+              type="radio"
+              name="chunking"
+              checked={useChunking}
+              onChange={() => setUseChunking(true)}
+              disabled={isSubmitting || status === 'running' || status === 'pending'}
+            /> Yes
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="chunking"
+              checked={!useChunking}
+              onChange={() => setUseChunking(false)}
+              disabled={isSubmitting || status === 'running' || status === 'pending'}
+            /> No
+          </label>
+        </div>
+        <button
+          className="mb-2 bg-blue-600 text-white px-3 py-1 rounded"
+          onClick={handleNewRun}
+          disabled={isSubmitting || status === 'running' || status === 'pending'}
+        >
+          Trigger New RCA Run
+        </button>
+        {loadingJobs ? (
+          <div>Loading past runs...</div>
+        ) : jobs.length === 0 ? (
+          <div>No past RCA runs found.</div>
+        ) : (
+          <table className="w-full border text-sm">
+            <thead>
+              <tr>
+                <th className="border px-2 py-1">Run #</th>
+                <th className="border px-2 py-1">Status</th>
+                <th className="border px-2 py-1">Progress</th>
+                <th className="border px-2 py-1">Error</th>
+                <th className="border px-2 py-1">Started</th>
+                <th className="border px-2 py-1">Completed</th>
+                <th className="border px-2 py-1">Chunks</th>
+                <th className="border px-2 py-1">Failed Chunk</th>
+                <th className="border px-2 py-1">Retry</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((job, idx) => (
+                <tr key={job.id} className="border">
+                  <td className="border px-2 py-1">{jobs.length - idx}</td>
+                  <td className="border px-2 py-1">{job.status}</td>
+                  <td className="border px-2 py-1">{job.progress}%</td>
+                  <td className="border px-2 py-1 text-red-700">{job.error || '-'}</td>
+                  <td className="border px-2 py-1">{job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}</td>
+                  <td className="border px-2 py-1">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '-'}</td>
+                  <td className="border px-2 py-1">{job.totalChunks || '-'}</td>
+                  <td className="border px-2 py-1">{job.failedChunk || '-'}</td>
+                  <td className="border px-2 py-1">
+                    {job.status === 'failed' && (
+                      <button
+                        className="bg-yellow-500 text-white px-2 py-1 rounded"
+                        onClick={handleNewRun}
+                        disabled={isSubmitting}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 };

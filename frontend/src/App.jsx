@@ -10,8 +10,9 @@ import LLMStatus from './pages/LLMStatus'
 import FeedbackReview from './pages/FeedbackReview'
 
 function PrivateRoute({ children }) {
-  const { user } = useAuth()
-  return user ? children : <Navigate to="/login" replace />
+  const { user, loading } = useAuth();
+  if (loading) return <div className="flex items-center justify-center h-screen text-lg">Loading...</div>;
+  return user ? children : <Navigate to="/login" replace />;
 }
 
 function AppRoutes() {

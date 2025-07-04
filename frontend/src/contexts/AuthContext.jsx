@@ -19,19 +19,24 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem('token')
     if (token) {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
-      fetchCurrentUser()
+      fetchCurrentUser(token)
     } else {
       setLoading(false)
     }
   }, [])
 
-  const fetchCurrentUser = async () => {
+  const fetchCurrentUser = async (token) => {
     try {
       const response = await api.get('/users/me')
       setUser(response.data)
     } catch (error) {
-      localStorage.removeItem('token')
-      delete api.defaults.headers.common['Authorization']
+      // Only remove token if error is 401 (unauthorized)
+      if (error.response && error.response.status === 401) {
+        localStorage.removeItem('token')
+        delete api.defaults.headers.common['Authorization']
+        setUser(null)
+      }
+      // For other errors (e.g., network), keep the token and show loading as false
     } finally {
       setLoading(false)
     }
@@ -41,11 +46,11 @@ export function AuthProvider({ children }) {
     try {
       const response = await api.post('/auth/login', { email, password })
       const { token, user } = response.data
-      
-      localStorage.setItem('token', token)
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      if (token) {
+        localStorage.setItem('token', token)
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      }
       setUser(user)
-      
       return { success: true }
     } catch (error) {
       return { 
