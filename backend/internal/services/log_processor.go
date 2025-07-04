@@ -250,12 +250,15 @@ func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, err
 			analysis.Severity = aiAnalysis.Severity
 			analysis.Summary = aiAnalysis.Summary
 
-			// Add root cause and recommendations to metadata
+			// Add detailed error analysis to metadata
 			analysis.Metadata = map[string]interface{}{
-				"rootCause":       aiAnalysis.RootCause,
-				"recommendations": aiAnalysis.Recommendations,
-				"incidentType":    aiAnalysis.IncidentType,
-				"aiGenerated":     true,
+				"rootCause":         aiAnalysis.RootCause,
+				"recommendations":   aiAnalysis.Recommendations,
+				"incidentType":      aiAnalysis.IncidentType,
+				"errorAnalysis":     aiAnalysis.ErrorAnalysis,
+				"criticalErrors":    aiAnalysis.CriticalErrors,
+				"nonCriticalErrors": aiAnalysis.NonCriticalErrors,
+				"aiGenerated":       true,
 			}
 		}
 	} else {

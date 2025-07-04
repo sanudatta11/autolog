@@ -219,6 +219,97 @@ func (h *LogHandler) AnalyzeLogFile(c *gin.Context) {
 	})
 }
 
+// GetDetailedErrorAnalysis returns detailed error analysis for a log file
+func (h *LogHandler) GetDetailedErrorAnalysis(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	// Check if user owns this log file
+	var logFile models.LogFile
+	if err := h.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
+		}
+		return
+	}
+
+	if logFile.UploadedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return
+	}
+
+	// Check if log file is processed
+	if logFile.Status != "completed" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Log file not yet processed"})
+		return
+	}
+
+	// Get detailed error analysis
+	errorAnalysis, err := h.llmService.AnalyzeLogsWithAI(logFile, logFile.Entries)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error analysis failed: %v", err)})
+		return
+	}
+
+	// Filter only ERROR and FATAL entries for the response
+	var errorEntries []models.LogEntry
+	for _, entry := range logFile.Entries {
+		if entry.Level == models.LogLevelError || entry.Level == models.LogLevelFatal {
+			errorEntries = append(errorEntries, entry)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"logFile":       logFile.Filename,
+		"errorAnalysis": errorAnalysis,
+		"errorEntries":  errorEntries,
+		"totalErrors":   len(errorEntries),
+	})
+}
+
+// GetLLMStatus returns the status of the LLM service and available models
+func (h *LogHandler) GetLLMStatus(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Check LLM health
+	healthError := h.llmService.CheckLLMHealth()
+
+	// Get available models
+	models, modelsError := h.llmService.GetAvailableModels()
+
+	// Get current model configuration
+	currentModel := "llama2" // Default, could be made configurable
+
+	status := "healthy"
+	if healthError != nil {
+		status = "unhealthy"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":          status,
+		"healthError":     healthError,
+		"currentModel":    currentModel,
+		"availableModels": models,
+		"modelsError":     modelsError,
+		"ollamaUrl":       "http://localhost:11434",
+	})
+}
+
 // GetLogAnalyses returns all analyses for a log file
 func (h *LogHandler) GetLogAnalyses(c *gin.Context) {
 	userID := getUserIDFromContext(c)

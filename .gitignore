@@ -120,4 +120,9 @@ temp/
 *.sqlite3
 
 # Uploads
-uploads/ 
+uploads/
+
+# Backend data and responses
+backend/data/responses/
+backend/data/sample-logs*.json
+backend/data/sample-logs*.txt 

@@ -12,6 +12,7 @@ const Logs = () => {
   const [selectedLogFile, setSelectedLogFile] = useState(null);
   const [logEntries, setLogEntries] = useState([]);
   const [analyses, setAnalyses] = useState([]);
+  const [showAllEntries, setShowAllEntries] = useState(false);
 
   useEffect(() => {
     fetchLogFiles();
@@ -139,6 +140,9 @@ const Logs = () => {
     }
   };
 
+  // Helper to filter error/fatal entries
+  const getErrorEntries = (entries) => entries.filter(e => e.level === 'ERROR' || e.level === 'FATAL');
+
   return (
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-8">Log Analysis</h1>
@@ -257,15 +261,38 @@ const Logs = () => {
                      </span>
                    </div>
                    <p className="text-gray-700 mb-3">{analysis.summary}</p>
-                   
-                   {/* AI-generated details */}
+                   {/* DETAILED ERROR ANALYSIS */}
+                   {Array.isArray(analysis.metadata?.errorAnalysis) && analysis.metadata.errorAnalysis.length > 0 && (
+                     <div className="mb-3">
+                       <h4 className="font-medium text-sm text-gray-800 mb-1">Error Patterns & RCA:</h4>
+                       <div className="space-y-2">
+                         {analysis.metadata.errorAnalysis.map((err, idx) => (
+                           <div key={idx} className="border border-gray-100 rounded p-2 bg-gray-50">
+                             <div className="flex flex-wrap gap-2 items-center mb-1">
+                               <span className="font-semibold text-red-700">{err.errorPattern}</span>
+                               <span className="text-xs text-gray-600">Count: {err.errorCount}</span>
+                               <span className="text-xs text-gray-600">Severity: {err.severity}</span>
+                               <span className="text-xs text-gray-600">First: {err.firstOccurrence}</span>
+                               <span className="text-xs text-gray-600">Last: {err.lastOccurrence}</span>
+                             </div>
+                             <div className="text-xs text-gray-700 mb-1"><b>Root Cause:</b> {err.rootCause}</div>
+                             <div className="text-xs text-gray-700 mb-1"><b>Impact:</b> {err.impact}</div>
+                             <div className="text-xs text-gray-700 mb-1"><b>Fix:</b> {err.fix}</div>
+                             {err.relatedErrors && err.relatedErrors.length > 0 && (
+                               <div className="text-xs text-gray-500"><b>Related Errors:</b> {err.relatedErrors.join(', ')}</div>
+                             )}
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                   )}
+                   {/* ... existing code for root cause, recommendations, etc ... */}
                    {analysis.metadata?.rootCause && (
                      <div className="mb-3">
                        <h4 className="font-medium text-sm text-gray-800 mb-1">Root Cause:</h4>
                        <p className="text-sm text-gray-600">{analysis.metadata.rootCause}</p>
                      </div>
                    )}
-                   
                    {analysis.metadata?.recommendations && analysis.metadata.recommendations.length > 0 && (
                      <div className="mb-3">
                        <h4 className="font-medium text-sm text-gray-800 mb-1">Recommendations:</h4>
@@ -276,14 +303,12 @@ const Logs = () => {
                        </ul>
                      </div>
                    )}
-                   
                    {analysis.metadata?.incidentType && (
                      <div className="mb-3">
                        <h4 className="font-medium text-sm text-gray-800 mb-1">Incident Type:</h4>
                        <p className="text-sm text-gray-600">{analysis.metadata.incidentType}</p>
                      </div>
                    )}
-                   
                    <div className="text-sm text-gray-600 mt-2">
                      Errors: {analysis.errorCount} | Warnings: {analysis.warningCount}
                    </div>
@@ -292,10 +317,21 @@ const Logs = () => {
              </div>
            )}
 
-          {/* Log Entries */}
-          <h3 className="text-lg font-medium mb-3">Log Entries</h3>
+          {/* Log Entries Toggle */}
+          <div className="flex items-center mb-2">
+            <h3 className="text-lg font-medium mr-4">Log Entries</h3>
+            <label className="flex items-center text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showAllEntries}
+                onChange={() => setShowAllEntries((v) => !v)}
+                className="mr-1"
+              />
+              Show all entries
+            </label>
+          </div>
           <div className="max-h-96 overflow-y-auto">
-            {logEntries.map((entry) => (
+            {(showAllEntries ? logEntries : getErrorEntries(logEntries)).map((entry) => (
               <div key={entry.id} className="border-b border-gray-100 py-2">
                 <div className="flex items-start space-x-3">
                   <span className={`font-mono text-sm ${getLevelColor(entry.level)}`}>

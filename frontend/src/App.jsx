@@ -9,6 +9,7 @@ import IncidentDetail from './pages/IncidentDetail'
 import CreateIncident from './pages/CreateIncident'
 import Users from './pages/Users'
 import Logs from './pages/Logs'
+import LLMStatus from './pages/LLMStatus'
 
 function PrivateRoute({ children }) {
   const { user } = useAuth()
@@ -30,6 +31,7 @@ function AppRoutes() {
         <Route path="incidents/:id" element={<IncidentDetail />} />
         <Route path="users" element={<Users />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="llm-status" element={<LLMStatus />} />
       </Route>
     </Routes>
   )

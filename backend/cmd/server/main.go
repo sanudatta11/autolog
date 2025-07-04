@@ -194,8 +194,15 @@ func main() {
 				logs.GET("/:id", logHandler.GetLogFile)
 				logs.POST("/:id/analyze", logHandler.AnalyzeLogFile)
 				logs.GET("/:id/analyses", logHandler.GetLogAnalyses)
+				logs.GET("/:id/error-analysis", logHandler.GetDetailedErrorAnalysis)
 				logs.DELETE("/:id", logHandler.DeleteLogFile)
 				logs.GET("", logHandler.GetLogFiles)
+			}
+
+			// LLM Status endpoint
+			llm := protected.Group("/llm")
+			{
+				llm.GET("/status", logHandler.GetLLMStatus)
 			}
 		}
 	}
