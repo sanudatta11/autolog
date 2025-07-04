@@ -27,7 +27,7 @@ function Layout() {
             <div className="flex items-center">
               <img
                 className="h-8 w-auto mr-3"
-                src="/autolog.svg"
+                src="https://i.ibb.co/KzhHzVrM/autolog.png"
                 alt="AutoLog Logo"
               />
               <h1 className="text-xl font-semibold text-gray-900">
