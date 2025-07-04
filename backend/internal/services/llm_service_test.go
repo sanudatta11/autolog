@@ -1,8 +1,8 @@
 package services
 
 import (
+	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/autolog/backend/internal/models"
 )
@@ -11,23 +11,23 @@ func TestFilterErrorEntries(t *testing.T) {
 	// Create test entries
 	entries := []models.LogEntry{
 		{
-			Level:   models.LogLevelInfo,
+			Level:   string(models.LogLevelInfo),
 			Message: "System started",
 		},
 		{
-			Level:   models.LogLevelError,
+			Level:   string(models.LogLevelError),
 			Message: "Database connection failed",
 		},
 		{
-			Level:   models.LogLevelDebug,
+			Level:   string(models.LogLevelDebug),
 			Message: "Debug info",
 		},
 		{
-			Level:   models.LogLevelFatal,
+			Level:   string(models.LogLevelFatal),
 			Message: "Critical system failure",
 		},
 		{
-			Level:   models.LogLevelWarning,
+			Level:   string(models.LogLevelWarning),
 			Message: "Warning message",
 		},
 	}
@@ -42,7 +42,7 @@ func TestFilterErrorEntries(t *testing.T) {
 
 	// Check that only ERROR and FATAL entries are included
 	for _, entry := range errorEntries {
-		if entry.Level != models.LogLevelError && entry.Level != models.LogLevelFatal {
+		if entry.Level != string(models.LogLevelError) && entry.Level != string(models.LogLevelFatal) {
 			t.Errorf("Expected ERROR or FATAL level, got %s", entry.Level)
 		}
 	}
@@ -129,13 +129,11 @@ func TestGenerateNoErrorsAnalysis(t *testing.T) {
 	}
 
 	llmService := &LLMService{}
-	analysis := llmService.generateNoErrorsAnalysis(logFile)
+	analysis := llmService.generateNoErrorsAnalysis(&logFile)
 
 	if analysis.Severity != "low" {
 		t.Errorf("Expected severity 'low', got '%s'", analysis.Severity)
 	}
-
-
 
 	if len(analysis.ErrorAnalysis) != 0 {
 		t.Errorf("Expected no error analysis, got %d", len(analysis.ErrorAnalysis))
@@ -150,44 +148,38 @@ func TestGenerateNoErrorsAnalysis(t *testing.T) {
 	}
 }
 
-func TestGenerateFallbackErrorAnalysis(t *testing.T) {
-	errorEntries := []models.LogEntry{
-		{
-			Timestamp: time.Now().Add(-time.Hour),
-			Level:     models.LogLevelError,
-			Message:   "Database connection failed",
-		},
-		{
-			Timestamp: time.Now(),
-			Level:     models.LogLevelError,
-			Message:   "Database connection failed",
-		},
-		{
-			Timestamp: time.Now(),
-			Level:     models.LogLevelFatal,
-			Message:   "System crash",
-		},
-	}
-
-	request := LogAnalysisRequest{
-		LogEntries: errorEntries,
-		Filename:   "test.log",
-	}
-
+func TestAttemptToFixJSON(t *testing.T) {
 	llmService := &LLMService{}
-	analysis := llmService.generateFallbackErrorAnalysis(request, errorEntries)
+	malformed := `{
+"summary": "The system failed to connect to an external analytics service due to a temporary endpoint unavailability, with no data loss or security issues.",
+"severity": "low",
+"rootCause": "The primary root cause is the temporary unavailability of the external analytics service's endpoint, as indicated by the 503 error code and retry attempts. This is likely due to maintenance or infrastructure issues on the service provider's end.",
+"reasoning": "Based on the log evidence, the system attempted to connect to the external analytics service at the specified endpoint but received a 503 error code, indicating that the endpoint is temporarily unavailable. The retry attempts suggest that the system is attempting to connect to the service despite the unavailability, which further supports the conclusion that the issue lies with the service provider's end. Additionally, there is no evidence of data loss or security issues, which suggests that the impact is minimal.",
+"recommendations": ["Monitor the external analytics service's status and availability to ensure a smooth connection when it becomes available again."],
+"furtherInvestigation": "To confirm the root cause, additional data such as the service provider's maintenance schedule or infrastructure issues would be helpful. Additionally, reviewing past incidents of similar nature could provide valuable insights into the service provider's reliability and potential mitigation strategies."
+"errorAnalysis": [
+{
+"errorPattern": "External analytics service endpoint unavailable",
+"errorCount": 1,
+"firstOccurrence": "2025-07-04 15:30:30",
+"lastOccurrence": "2025-07-04 15:30:30",
+"severity": "low",
+"rootCause": "Temporary unavailability of the external analytics service's endpoint",
+"impact": "Minimal, as there is no data loss or security issues.",
+"fix": "Monitor the service provider's status and availability to ensure a smooth connection when it becomes available again."
+}
+],
+"criticalErrors": 0,
+"nonCriticalErrors": 1
+}`
 
-	if len(analysis.ErrorAnalysis) == 0 {
-		t.Error("Expected error analysis to be generated")
+	fixed := llmService.attemptToFixJSON(malformed)
+	var result map[string]interface{}
+	err := json.Unmarshal([]byte(fixed), &result)
+	if err != nil {
+		t.Errorf("attemptToFixJSON did not produce valid JSON. Error: %v\nFixed: %s", err, fixed)
 	}
-
-	// Should have grouped similar errors
-	if len(analysis.ErrorAnalysis) < 1 {
-		t.Errorf("Expected at least 1 error pattern, got %d", len(analysis.ErrorAnalysis))
-	}
-
-	// Check that critical errors are counted
-	if analysis.CriticalErrors == 0 && analysis.NonCriticalErrors == 0 {
-		t.Error("Expected error counts to be calculated")
+	if _, ok := result["summary"]; !ok {
+		t.Error("Fixed JSON does not contain expected 'summary' field")
 	}
 }

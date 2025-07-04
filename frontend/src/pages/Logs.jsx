@@ -423,7 +423,12 @@ const Logs = () => {
             ) : llmModalAnalysis ? (
               <div className="space-y-4">
                 {(() => {
-                  const analysis = llmModalAnalysis.analysis || llmModalAnalysis;
+                  // Robustly extract the analysis object
+                  let analysis = llmModalAnalysis;
+                  if (analysis && typeof analysis === 'object') {
+                    if ('final' in analysis) analysis = analysis.final;
+                    else if ('analysis' in analysis) analysis = analysis.analysis;
+                  }
                   return (
                     <>
                       {/* Summary & Severity */}

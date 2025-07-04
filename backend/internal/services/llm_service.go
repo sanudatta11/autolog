@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"math"
+	"regexp"
 	"sync"
 
 	"github.com/autolog/backend/internal/models"
@@ -412,6 +413,12 @@ ANALYSIS REQUIREMENTS:
 6. Be as specific and actionable as possible in your recommendations
 7. Output valid JSON only
 8. If you find similar past incidents, reference them in your reasoning
+
+IMPORTANT RESPONSE INSTRUCTIONS:
+- Respond with valid, minified JSON only. Do not include any explanation, markdown, or extra text.
+- Do not include any comments, markdown code blocks, or any text before or after the JSON.
+- Do not pretty-print or add newlines; output must be a single-line JSON object.
+- If you cannot answer, return an empty JSON object: {}
 `
 
 	return prompt
@@ -705,10 +712,23 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 		return nil, fmt.Errorf("LLM did not return valid JSON. Raw response: %q", cleanResponse)
 	}
 
+	// Try to parse the JSON as-is first
 	var analysis LogAnalysisResponse
 	if err := json.Unmarshal([]byte(cleanResponse), &analysis); err != nil {
-		log.Printf("Failed to parse JSON from LLM: %q", cleanResponse)
-		return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
+		log.Printf("Failed to parse JSON from LLM, attempting to fix common issues: %v", err)
+
+		// Try to fix common JSON syntax errors
+		fixedResponse := ls.attemptToFixJSON(cleanResponse)
+		if fixedResponse != cleanResponse {
+			log.Printf("Attempting to parse fixed JSON")
+			if err := json.Unmarshal([]byte(fixedResponse), &analysis); err != nil {
+				log.Printf("Failed to parse fixed JSON from LLM: %q", fixedResponse)
+				return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
+			}
+		} else {
+			log.Printf("Failed to parse JSON from LLM: %q", cleanResponse)
+			return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
+		}
 	}
 
 	// Validate and normalize the response
@@ -739,6 +759,35 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 	}
 
 	return &analysis, nil
+}
+
+// attemptToFixJSON tries to fix common JSON syntax errors
+func (ls *LLMService) attemptToFixJSON(jsonStr string) string {
+	// Remove stray \n before property names (not inside strings)
+	re := regexp.MustCompile(`,?\\n\s*"([a-zA-Z0-9_]+"):`)
+	jsonStr = re.ReplaceAllString(jsonStr, `,"$1:`)
+
+	// Remove any remaining stray \n not inside strings
+	re = regexp.MustCompile(`\\n`)
+	jsonStr = re.ReplaceAllString(jsonStr, "")
+
+	// Now apply the previous comma-fixing logic
+	re = regexp.MustCompile(`([^",{\[])
+\s*"([a-zA-Z0-9_]+"):`)
+	jsonStr = re.ReplaceAllString(jsonStr, `$1,\n"$2:`)
+
+	re = regexp.MustCompile(`\{,`)
+	jsonStr = re.ReplaceAllString(jsonStr, "{")
+
+	jsonStr = strings.ReplaceAll(jsonStr, ",,", ",")
+	jsonStr = strings.ReplaceAll(jsonStr, ",}", "}")
+	jsonStr = strings.ReplaceAll(jsonStr, ",]", "]")
+
+	// Insert a comma between a closing quote/bracket/number and an immediately following property name (quote)
+	re = regexp.MustCompile(`(["}\]0-9])\s*"([a-zA-Z0-9_]+"):`)
+	jsonStr = re.ReplaceAllString(jsonStr, `$1,"$2:`)
+
+	return jsonStr
 }
 
 func (ls *LLMService) normalizeSeverity(severity string) string {
