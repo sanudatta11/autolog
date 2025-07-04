@@ -35,6 +35,7 @@
 	@echo ""
 	@echo "🔧 Utility Commands:"
 	@echo "  clean            Clean build artifacts"
+	@echo "  migrate          Run database migrations"
 	@echo "  setup            Initial project setup"
 	@echo "  adminer          Open Adminer in browser"
 	@echo "  urls             Show all service URLs"
@@ -130,6 +131,15 @@ clean: ## Clean build artifacts
 	@rm -rf backend/bin
 	@rm -rf node_modules
 	@rm -rf frontend/node_modules
+
+migrate: ## Run database migrations
+	@echo "🗄️ Running database migrations..."
+	@echo "   Make sure you've run 'make dev-local' first!"
+ifeq ($(OS),Windows_NT)
+	cd backend && powershell -Command "go run cmd/migrate/main.go"
+else
+	cd backend && go run cmd/migrate/main.go
+endif
 
 setup: ## Initial project setup
 	@echo "🚀 Setting up AutoLog project..."

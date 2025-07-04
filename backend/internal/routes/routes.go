@@ -54,8 +54,29 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB) {
 				logs.POST("/:id/analyze", logController.AnalyzeLogFile)
 				logs.GET("/:id/analyses", logController.GetLogAnalyses)
 				logs.GET("/:id/error-analysis", logController.GetDetailedErrorAnalysis)
+				logs.GET("/:id/rca-results", logController.GetRCAResults)
 				logs.DELETE("/:id", logController.DeleteLogFile)
 				logs.GET("", logController.GetLogFiles)
+			}
+
+			// RCA Jobs
+			jobs := protected.Group("/jobs")
+			{
+				jobs.GET("/:jobId/status", logController.GetRCAJobStatus)
+			}
+
+			// Admin routes
+			admin := protected.Group("/admin")
+			{
+				admin.GET("/logs", logController.GetAdminLogs)
+			}
+
+			// Log Analysis Memory Feedback
+			analyses := protected.Group("/analyses")
+			{
+				analyses.POST(":id/feedback", logController.AddFeedback)
+				analyses.GET(":id/feedback", logController.GetFeedbackForAnalysis)
+				analyses.GET("export/all", logController.ExportAllFeedback)
 			}
 
 			// LLM Status endpoint

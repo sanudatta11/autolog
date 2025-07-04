@@ -162,9 +162,20 @@ func seedDatabase() error {
 
 func seedUsers() error {
 	// Read users JSON file
-	usersData, err := os.ReadFile("data/initial-users.json")
+	log.Println("🔍 Looking for users file at ../../data/initial-users.json")
+	usersData, err := os.ReadFile("../../data/initial-users.json")
 	if err != nil {
-		return err
+		log.Printf("⚠️ First path failed: %v", err)
+		// Try alternative path
+		log.Println("🔍 Looking for users file at data/initial-users.json")
+		usersData, err = os.ReadFile("data/initial-users.json")
+		if err != nil {
+			log.Printf("❌ Both paths failed: %v", err)
+			return fmt.Errorf("failed to read users file: %w", err)
+		}
+		log.Println("✅ Found users file at data/initial-users.json")
+	} else {
+		log.Println("✅ Found users file at ../../data/initial-users.json")
 	}
 
 	var jsonData JSONData
@@ -181,20 +192,20 @@ func seedUsers() error {
 			continue
 		}
 
-		// Map role string to Role enum
-		var role models.UserRole
+		// Map role string to string
+		var role string
 		switch userData.Role {
 		case "admin":
-			role = models.RoleAdmin
+			role = "ADMIN"
 		case "manager":
-			role = models.RoleManager
+			role = "MANAGER"
 		case "responder":
-			role = models.RoleResponder
+			role = "RESPONDER"
 		case "viewer":
-			role = models.RoleViewer
+			role = "VIEWER"
 		default:
 			log.Printf("Unknown role %s for user %s, defaulting to viewer", userData.Role, userData.Email)
-			role = models.RoleViewer
+			role = "VIEWER"
 		}
 
 		user := models.User{

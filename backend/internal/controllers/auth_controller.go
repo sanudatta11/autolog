@@ -103,7 +103,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 		Password:  string(hashedPassword),
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
-		Role:      models.RoleViewer, // Default role
+		Role:      "VIEWER", // Default role
 	}
 
 	if err := ac.db.Create(&user).Error; err != nil {

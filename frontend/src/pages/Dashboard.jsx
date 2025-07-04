@@ -22,15 +22,15 @@ function Dashboard() {
       const [logsResponse] = await Promise.all([
         api.get('/logs?limit=5')
       ])
-      const logs = logsResponse.data || []
+      const logs = logsResponse.data?.logFiles || []
       setRecentAnalyses(logs)
       // Calculate stats from logs
       const stats = {
         totalLogs: logs.length * 1000, // Mock data
-        analyzedLogs: logs.filter(l => l.analysisStatus === 'COMPLETED').length * 500,
-        rcaReports: logs.filter(l => l.rcaGenerated).length,
+        analyzedLogs: logs.filter(l => l.status === 'completed').length * 500,
+        rcaReports: logs.filter(l => l.status === 'completed').length,
         activeConnectors: 3, // Mock data for CloudWatch, Splunk, etc.
-        anomalies: logs.filter(l => l.anomalyDetected).length
+        anomalies: logs.filter(l => l.errorCount > 0).length
       }
       setStats(stats)
     } catch (error) {

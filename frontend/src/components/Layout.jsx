@@ -13,6 +13,11 @@ function Layout() {
     { name: 'Users', href: '/users', icon: '👥' },
   ]
 
+  // Add Feedback Review for admins
+  if (user?.role === 'ADMIN') {
+    navigation.push({ name: 'Feedback Review', href: '/feedback-review', icon: '📝' })
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}

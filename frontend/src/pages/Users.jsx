@@ -12,7 +12,7 @@ function Users() {
   const fetchUsers = async () => {
     try {
       const response = await api.get('/users')
-      setUsers(response.data || [])
+      setUsers(response.data.users || [])
     } catch (error) {
       console.error('Error fetching users:', error)
     } finally {
@@ -57,35 +57,39 @@ function Users() {
               No users found
             </div>
           ) : (
-            users.map((user) => (
-              <div key={user.id} className="px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex-shrink-0">
-                      <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                        <span className="text-sm font-medium text-gray-700">
-                          {user.firstName.charAt(0)}{user.lastName.charAt(0)}
-                        </span>
+            <>
+              {users.map((user) => (
+                <div key={user.id} className="px-6 py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <div className="flex-shrink-0">
+                        <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
+                          <span className="text-sm font-medium text-gray-700">
+                            {user.firstName && user.lastName ? 
+                              `${user.firstName.charAt(0)}${user.lastName.charAt(0)}` : 
+                              user.email.charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-900">
+                          {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.email}
+                        </h3>
+                        <p className="text-sm text-gray-500">{user.email}</p>
                       </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm font-medium text-gray-900">
-                        {user.firstName} {user.lastName}
-                      </h3>
-                      <p className="text-sm text-gray-500">{user.email}</p>
+                    <div className="flex items-center space-x-2">
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${getRoleColor(user.role)}`}>
+                        {user.role || 'VIEWER'}
+                      </span>
+                      <span className="text-sm text-gray-500">
+                        Joined {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'Unknown'}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getRoleColor(user.role)}`}>
-                      {user.role}
-                    </span>
-                    <span className="text-sm text-gray-500">
-                      Joined {new Date(user.createdAt).toLocaleDateString()}
-                    </span>
-                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </>
           )}
         </div>
       </div>

@@ -57,28 +57,31 @@ type LogEntry struct {
 }
 
 type LogFile struct {
-	ID           uint           `json:"id" gorm:"primaryKey"`
-	Filename     string         `json:"filename" gorm:"not null"`
-	Size         int64          `json:"size"`
-	UploadedBy   uint           `json:"uploadedBy" gorm:"not null"`
-	Uploader     User           `json:"uploader" gorm:"foreignKey:UploadedBy"`
-	Status       string         `json:"status" gorm:"default:'pending'"` // pending, processing, completed, failed
-	EntryCount   int            `json:"entryCount" gorm:"default:0"`
-	ErrorCount   int            `json:"errorCount" gorm:"default:0"`
-	WarningCount int            `json:"warningCount" gorm:"default:0"`
-	ProcessedAt  *time.Time     `json:"processedAt"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
+	ID         uint   `json:"id" gorm:"primaryKey"`
+	Filename   string `json:"filename" gorm:"not null"`
+	Size       int64  `json:"size"`
+	UploadedBy uint   `json:"uploadedBy" gorm:"not null"`
+	// Uploader     User           `json:"uploader" gorm:"foreignKey:UploadedBy"` // Temporarily disabled
+	Status            string         `json:"status" gorm:"default:'pending'"` // pending, processing, completed, failed
+	EntryCount        int            `json:"entryCount" gorm:"default:0"`
+	ErrorCount        int            `json:"errorCount" gorm:"default:0"`
+	WarningCount      int            `json:"warningCount" gorm:"default:0"`
+	ProcessedAt       *time.Time     `json:"processedAt"`
+	RCAAnalysisStatus string         `json:"rcaAnalysisStatus" gorm:"default:'not_started'"` // not_started, pending, running, completed, failed
+	RCAAnalysisJobID  *uint          `json:"rcaAnalysisJobId"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	UpdatedAt         time.Time      `json:"updatedAt"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relationships
-	Entries []LogEntry `json:"entries,omitempty" gorm:"foreignKey:LogFileID"`
+	Entries        []LogEntry `json:"entries,omitempty" gorm:"foreignKey:LogFileID"`
+	RCAAnalysisJob *Job       `json:"rcaAnalysisJob,omitempty" gorm:"foreignKey:RCAAnalysisJobID"`
 }
 
 type LogAnalysis struct {
-	ID           uint           `json:"id" gorm:"primaryKey"`
-	LogFileID    uint           `json:"logFileId" gorm:"not null"`
-	LogFile      LogFile        `json:"logFile" gorm:"foreignKey:LogFileID"`
+	ID        uint    `json:"id" gorm:"primaryKey"`
+	LogFileID uint    `json:"logFileId" gorm:"not null"`
+	LogFile   LogFile `json:"logFile" gorm:"foreignKey:LogFileID"`
 
 	StartTime    time.Time      `json:"startTime"`
 	EndTime      time.Time      `json:"endTime"`

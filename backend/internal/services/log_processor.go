@@ -110,6 +110,11 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		return fmt.Errorf("failed to update log file stats: %w", err)
 	}
 
+	// Delete the uploaded file after successful parsing and DB write
+	if err := os.Remove(filePath); err != nil {
+		log.Printf("Warning: failed to delete uploaded file %s: %v", filePath, err)
+	}
+
 	return nil
 }
 
@@ -252,9 +257,9 @@ func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, err
 
 			// Add detailed error analysis to metadata
 			analysis.Metadata = map[string]interface{}{
-				"rootCause":         aiAnalysis.RootCause,
-				"recommendations":   aiAnalysis.Recommendations,
-		
+				"rootCause":       aiAnalysis.RootCause,
+				"recommendations": aiAnalysis.Recommendations,
+
 				"errorAnalysis":     aiAnalysis.ErrorAnalysis,
 				"criticalErrors":    aiAnalysis.CriticalErrors,
 				"nonCriticalErrors": aiAnalysis.NonCriticalErrors,

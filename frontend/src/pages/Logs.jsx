@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
+import RCAnalysis from '../components/RCAnalysis';
+import AdminLogs from '../components/AdminLogs';
 
 const Logs = () => {
   const { token } = useAuth();
@@ -11,15 +13,26 @@ const Logs = () => {
   const [message, setMessage] = useState('');
   const [selectedLogFile, setSelectedLogFile] = useState(null);
   const [logEntries, setLogEntries] = useState([]);
-  const [analyses, setAnalyses] = useState([]);
   const [showAllEntries, setShowAllEntries] = useState(false);
   const [llmModalOpen, setLlmModalOpen] = useState(false);
   const [llmModalAnalysis, setLlmModalAnalysis] = useState(null);
   const [llmModalLogFile, setLlmModalLogFile] = useState(null);
 
+  const [userRole, setUserRole] = useState('');
+
   useEffect(() => {
     fetchLogFiles();
+    fetchUserRole();
   }, []);
+
+  const fetchUserRole = async () => {
+    try {
+      const response = await api.get('/users/me');
+      setUserRole(response.data.user.role);
+    } catch (error) {
+      console.error('Failed to fetch user role:', error);
+    }
+  };
 
   const fetchLogFiles = async () => {
     setLoading(true);
@@ -93,13 +106,12 @@ const Logs = () => {
   const handleAnalyze = async (logFileId) => {
     try {
       const response = await api.post(`/logs/${logFileId}/analyze`);
-      setMessage('Analysis completed: ' + response.data.message);
+      setMessage('RCA analysis started: ' + response.data.message);
       
-      // Fetch analyses
-      const analysesResponse = await api.get(`/logs/${logFileId}/analyses`);
-      setAnalyses(analysesResponse.data.analyses || []);
+      // Refresh log files to show updated status
+      setTimeout(fetchLogFiles, 1000);
     } catch (error) {
-      setMessage('Analysis failed: ' + error.message);
+      setMessage('Analysis failed: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -116,7 +128,6 @@ const Logs = () => {
       if (selectedLogFile && selectedLogFile.id === logFileId) {
         setSelectedLogFile(null);
         setLogEntries([]);
-        setAnalyses([]);
       }
     } catch (error) {
       setMessage('Failed to delete log file: ' + error.message);
@@ -146,26 +157,28 @@ const Logs = () => {
   // Helper to filter error/fatal entries
   const getErrorEntries = (entries) => entries.filter(e => e.level === 'ERROR' || e.level === 'FATAL');
 
-  // Fetch and show LLM analysis modal
+  // Fetch and show RCA analysis modal
   const handleShowLLMAnalysis = async (logFile) => {
     try {
-      const response = await api.get(`/logs/${logFile.id}/analyses`);
-      const analyses = response.data.analyses || [];
-      if (analyses.length > 0) {
-        setLlmModalAnalysis(analyses[0]); // Show the latest analysis
+      // Check if RCA analysis is completed
+      if (logFile.rcaAnalysisStatus === 'completed') {
+        const response = await api.get(`/logs/${logFile.id}/rca-results`);
+        setLlmModalAnalysis(response.data.analysis);
         setLlmModalLogFile(logFile);
         setLlmModalOpen(true);
       } else {
-        setLlmModalAnalysis(null);
+        setLlmModalAnalysis({ error: 'RCA analysis not completed yet' });
         setLlmModalLogFile(logFile);
         setLlmModalOpen(true);
       }
     } catch (error) {
-      setLlmModalAnalysis({ error: 'Failed to fetch LLM analysis: ' + error.message });
+      setLlmModalAnalysis({ error: 'Failed to fetch RCA analysis: ' + error.message });
       setLlmModalLogFile(logFile);
       setLlmModalOpen(true);
     }
   };
+
+
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -272,6 +285,10 @@ const Logs = () => {
                       <span className={getStatusColor(logFile.status)}>
                         Status: {logFile.status}
                       </span>
+                      <span className="mx-2">•</span>
+                      <span className={getStatusColor(logFile.rcaAnalysisStatus)}>
+                        RCA: {logFile.rcaAnalysisStatus || 'not_started'}
+                      </span>
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       Uploaded: {new Date(logFile.createdAt).toLocaleString()}
@@ -284,20 +301,30 @@ const Logs = () => {
                     >
                       View
                     </button>
-                    {logFile.status === 'completed' && (
-                                          <button
-                      onClick={() => handleAnalyze(logFile.id)}
-                      className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
-                    >
-                      Generate RCA
-                    </button>
+                    {logFile.status === 'completed' && logFile.rcaAnalysisStatus !== 'pending' && logFile.rcaAnalysisStatus !== 'running' && (
+                      <button
+                        onClick={() => handleAnalyze(logFile.id)}
+                        className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
+                      >
+                        Generate RCA
+                      </button>
                     )}
-                    <button
-                      onClick={() => handleShowLLMAnalysis(logFile)}
-                      className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
-                    >
-                      View RCA
-                    </button>
+                    {(logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (
+                      <button
+                        disabled
+                        className="bg-gray-400 text-white px-3 py-1 rounded text-sm cursor-not-allowed"
+                      >
+                        RCA Running...
+                      </button>
+                    )}
+                    {logFile.rcaAnalysisStatus === 'completed' && (
+                      <button
+                        onClick={() => handleShowLLMAnalysis(logFile)}
+                        className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+                      >
+                        View RCA
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(logFile.id)}
                       className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
@@ -319,76 +346,25 @@ const Logs = () => {
             Log Details: {selectedLogFile.filename}
           </h2>
           
-                     {/* Analyses */}
-           {analyses.length > 0 && (
-             <div className="mb-6">
-               <h3 className="text-lg font-medium mb-3">Analyses</h3>
-               {analyses.map((analysis) => (
-                 <div key={analysis.id} className="border border-gray-200 rounded p-4 mb-3">
-                   <div className="flex items-center justify-between mb-2">
-                     <div className="flex items-center space-x-4">
-                       <span className="font-medium">Severity: {analysis.severity}</span>
-                       {analysis.metadata?.aiGenerated && (
-                         <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
-                           AI Generated
-                         </span>
-                       )}
-                     </div>
-                     <span className="text-sm text-gray-600">
-                       {new Date(analysis.createdAt).toLocaleString()}
-                     </span>
-                   </div>
-                   <p className="text-gray-700 mb-3">{analysis.summary}</p>
-                   {/* DETAILED ERROR ANALYSIS */}
-                   {Array.isArray(analysis.metadata?.errorAnalysis) && analysis.metadata.errorAnalysis.length > 0 && (
-                     <div className="mb-3">
-                       <h4 className="font-medium text-sm text-gray-800 mb-1">Error Patterns & RCA:</h4>
-                       <div className="space-y-2">
-                         {analysis.metadata.errorAnalysis.map((err, idx) => (
-                           <div key={idx} className="border border-gray-100 rounded p-2 bg-gray-50">
-                             <div className="flex flex-wrap gap-2 items-center mb-1">
-                               <span className="font-semibold text-red-700">{err.errorPattern}</span>
-                               <span className="text-xs text-gray-600">Count: {err.errorCount}</span>
-                               <span className="text-xs text-gray-600">Severity: {err.severity}</span>
-                               <span className="text-xs text-gray-600">First: {err.firstOccurrence}</span>
-                               <span className="text-xs text-gray-600">Last: {err.lastOccurrence}</span>
-                             </div>
-                             <div className="text-xs text-gray-700 mb-1"><b>Root Cause:</b> {err.rootCause}</div>
-                             <div className="text-xs text-gray-700 mb-1"><b>Impact:</b> {err.impact}</div>
-                             <div className="text-xs text-gray-700 mb-1"><b>Fix:</b> {err.fix}</div>
-                             {err.relatedErrors && err.relatedErrors.length > 0 && (
-                               <div className="text-xs text-gray-500"><b>Related Errors:</b> {err.relatedErrors.join(', ')}</div>
-                             )}
-                           </div>
-                         ))}
-                       </div>
-                     </div>
-                   )}
-                   {/* ... existing code for root cause, recommendations, etc ... */}
-                   {analysis.metadata?.rootCause && (
-                     <div className="mb-3">
-                       <h4 className="font-medium text-sm text-gray-800 mb-1">Root Cause:</h4>
-                       <p className="text-sm text-gray-600">{analysis.metadata.rootCause}</p>
-                     </div>
-                   )}
-                   {analysis.metadata?.recommendations && analysis.metadata.recommendations.length > 0 && (
-                     <div className="mb-3">
-                       <h4 className="font-medium text-sm text-gray-800 mb-1">Recommendations:</h4>
-                       <ul className="text-sm text-gray-600 list-disc list-inside">
-                         {analysis.metadata.recommendations.map((rec, index) => (
-                           <li key={index}>{rec}</li>
-                         ))}
-                       </ul>
-                     </div>
-                   )}
+          {/* RCA Analysis Component */}
+          <div className="mb-6">
+            <RCAnalysis 
+              logFileId={selectedLogFile.id} 
+              onAnalysisComplete={(results) => {
+                setMessage('RCA analysis completed successfully!');
+                fetchLogFiles();
+              }}
+            />
+          </div>
 
-                   <div className="text-sm text-gray-600 mt-2">
-                     Errors: {analysis.errorCount} | Warnings: {analysis.warningCount}
-                   </div>
-                 </div>
-               ))}
-             </div>
-           )}
+          {/* Admin Logs Component */}
+          {userRole === 'ADMIN' && (
+            <div className="mb-6">
+              <AdminLogs />
+            </div>
+          )}
+          
+           
 
           {/* Log Entries Toggle */}
           <div className="flex items-center mb-2">
@@ -445,53 +421,112 @@ const Logs = () => {
             {llmModalAnalysis?.error ? (
               <div className="text-red-600">{llmModalAnalysis.error}</div>
             ) : llmModalAnalysis ? (
-              <div>
-                <div className="mb-2">
-                  <span className="font-medium">Severity:</span> {llmModalAnalysis.severity}
-                </div>
-                <div className="mb-2">
-                  <span className="font-medium">Summary:</span> {llmModalAnalysis.summary}
-                </div>
-                {llmModalAnalysis.metadata?.errorAnalysis && llmModalAnalysis.metadata.errorAnalysis.length > 0 && (
-                  <div className="mb-3">
-                    <h4 className="font-medium text-sm text-gray-800 mb-1">Error Patterns & RCA:</h4>
-                    <div className="space-y-2">
-                      {llmModalAnalysis.metadata.errorAnalysis.map((err, idx) => (
-                        <div key={idx} className="border border-gray-100 rounded p-2 bg-gray-50">
-                          <div className="flex flex-wrap gap-2 items-center mb-1">
-                            <span className="font-semibold text-red-700">{err.errorPattern}</span>
-                            <span className="text-xs text-gray-600">Count: {err.errorCount}</span>
-                            <span className="text-xs text-gray-600">Severity: {err.severity}</span>
-                            <span className="text-xs text-gray-600">First: {err.firstOccurrence}</span>
-                            <span className="text-xs text-gray-600">Last: {err.lastOccurrence}</span>
-                          </div>
-                          <div className="text-xs text-gray-700 mb-1"><b>Root Cause:</b> {err.rootCause}</div>
-                          <div className="text-xs text-gray-700 mb-1"><b>Impact:</b> {err.impact}</div>
-                          <div className="text-xs text-gray-700 mb-1"><b>Fix:</b> {err.fix}</div>
-                          {err.relatedErrors && err.relatedErrors.length > 0 && (
-                            <div className="text-xs text-gray-500"><b>Related Errors:</b> {err.relatedErrors.join(', ')}</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {llmModalAnalysis.metadata?.rootCause && (
-                  <div className="mb-2">
-                    <span className="font-medium">Root Cause:</span> {llmModalAnalysis.metadata.rootCause}
-                  </div>
-                )}
-                {llmModalAnalysis.metadata?.recommendations && llmModalAnalysis.metadata.recommendations.length > 0 && (
-                  <div className="mb-2">
-                    <span className="font-medium">Recommendations:</span>
-                    <ul className="list-disc list-inside text-sm text-gray-700">
-                      {llmModalAnalysis.metadata.recommendations.map((rec, idx) => (
-                        <li key={idx}>{rec}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+              <div className="space-y-4">
+                {(() => {
+                  const analysis = llmModalAnalysis.analysis || llmModalAnalysis;
+                  return (
+                    <>
+                      {/* Summary & Severity */}
+                      <div>
+                        <h3 className="font-medium text-lg mb-1">Summary</h3>
+                        <p className="text-gray-800 mb-2">{analysis.summary}</p>
+                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
+                          analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                          analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
+                          analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          Severity: {analysis.severity}
+                        </span>
+                      </div>
 
+                      {/* Root Cause */}
+                      {analysis.rootCause && (
+                        <div>
+                          <h3 className="font-medium text-lg mb-1 mt-4">Root Cause</h3>
+                          <p className="text-gray-800">{analysis.rootCause}</p>
+                        </div>
+                      )}
+
+                      {/* Recommendations */}
+                      {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
+                        <div>
+                          <h3 className="font-medium text-lg mb-1 mt-4">Recommendations</h3>
+                          <ul className="list-disc list-inside text-gray-800">
+                            {analysis.recommendations.map((rec, idx) => (
+                              <li key={idx}>{rec}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Error Counts */}
+                      <div className="flex space-x-6 mt-4">
+                        {typeof analysis.criticalErrors === 'number' && (
+                          <div className="text-red-700 font-semibold">Critical Errors: {analysis.criticalErrors}</div>
+                        )}
+                        {typeof analysis.nonCriticalErrors === 'number' && (
+                          <div className="text-yellow-700 font-semibold">Non-critical Errors: {analysis.nonCriticalErrors}</div>
+                        )}
+                        {typeof analysis.errorCount === 'number' && (
+                          <div className="text-gray-700 font-semibold">Total Errors: {analysis.errorCount}</div>
+                        )}
+                        {typeof analysis.warningCount === 'number' && (
+                          <div className="text-blue-700 font-semibold">Warnings: {analysis.warningCount}</div>
+                        )}
+                      </div>
+
+                      {/* Error Analysis Table */}
+                      {Array.isArray(analysis.errorAnalysis) && analysis.errorAnalysis.length > 0 && (
+                        <div className="mt-6">
+                          <h3 className="font-medium text-lg mb-2">Error Analysis</h3>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full border text-xs">
+                              <thead>
+                                <tr className="bg-gray-100">
+                                  <th className="px-2 py-1 border">Pattern</th>
+                                  <th className="px-2 py-1 border">Count</th>
+                                  <th className="px-2 py-1 border">Severity</th>
+                                  <th className="px-2 py-1 border">First</th>
+                                  <th className="px-2 py-1 border">Last</th>
+                                  <th className="px-2 py-1 border">Root Cause</th>
+                                  <th className="px-2 py-1 border">Impact</th>
+                                  <th className="px-2 py-1 border">Fix</th>
+                                  <th className="px-2 py-1 border">Related</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {analysis.errorAnalysis.map((err, idx) => (
+                                  <tr key={idx} className="border-b">
+                                    <td className="px-2 py-1 border font-mono">{err.errorPattern}</td>
+                                    <td className="px-2 py-1 border text-center">{err.errorCount}</td>
+                                    <td className={`px-2 py-1 border text-center ${err.severity === 'critical' ? 'text-red-700' : 'text-yellow-700'}`}>{err.severity}</td>
+                                    <td className="px-2 py-1 border font-mono">{err.firstOccurrence}</td>
+                                    <td className="px-2 py-1 border font-mono">{err.lastOccurrence}</td>
+                                    <td className="px-2 py-1 border">{err.rootCause}</td>
+                                    <td className="px-2 py-1 border">{err.impact}</td>
+                                    <td className="px-2 py-1 border">{err.fix}</td>
+                                    <td className="px-2 py-1 border">
+                                      {Array.isArray(err.relatedErrors) && err.relatedErrors.length > 0 ? (
+                                        <ul className="list-disc list-inside">
+                                          {err.relatedErrors.map((rel, i) => (
+                                            <li key={i}>{rel}</li>
+                                          ))}
+                                        </ul>
+                                      ) : (
+                                        <span className="text-gray-400">-</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             ) : (
               <div>No analysis found for this log file.</div>

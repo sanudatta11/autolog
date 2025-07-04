@@ -37,7 +37,7 @@ services:
       ENV: development
       PORT: 8080
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama2:latest
+      OLLAMA_MODEL: llama2:13b
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,7 +63,6 @@ services:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_MODELS=llama2:latest
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
@@ -73,6 +72,7 @@ services:
     restart: unless-stopped
     networks:
       - autolog-network
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull llama2:13b && ollama pull nomic-embed-text && tail -f /dev/null"]
 
   # React Frontend with Live Reload
   frontend:

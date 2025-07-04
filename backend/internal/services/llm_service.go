@@ -6,16 +6,22 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"math"
+
 	"github.com/autolog/backend/internal/models"
+	"gorm.io/gorm"
 )
 
 type LLMService struct {
-	baseURL string
-	model   string
-	client  *http.Client
+	baseURL    string
+	llmModel   string
+	embedModel string
+	client     *http.Client
 }
 
 type OllamaGenerateRequest struct {
@@ -43,10 +49,10 @@ type LogAnalysisRequest struct {
 
 // Enhanced response structure for detailed error analysis
 type LogAnalysisResponse struct {
-	Summary           string                  `json:"summary"`
-	Severity          string                  `json:"severity"`
-	RootCause         string                  `json:"rootCause"`
-	Recommendations   []string                `json:"recommendations"`
+	Summary         string   `json:"summary"`
+	Severity        string   `json:"severity"`
+	RootCause       string   `json:"rootCause"`
+	Recommendations []string `json:"recommendations"`
 
 	ErrorAnalysis     []DetailedErrorAnalysis `json:"errorAnalysis"`
 	CriticalErrors    int                     `json:"criticalErrors"`
@@ -66,18 +72,43 @@ type DetailedErrorAnalysis struct {
 	RelatedErrors   []string `json:"relatedErrors"`
 }
 
-func NewLLMService(ollamaURL, model string) *LLMService {
+// Embedding request/response for Ollama
+
+type OllamaEmbeddingRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+}
+
+type OllamaEmbeddingResponse struct {
+	Embedding []float32 `json:"embedding"`
+}
+
+func NewLLMService(ollamaURL, llmModel string) *LLMService {
 	if ollamaURL == "" {
 		ollamaURL = "http://localhost:11434"
 	}
-	if model == "" {
-		model = "llama2"
+	if llmModel == "" {
+		llmModel = "llama2:13b"
+	}
+	embedModel := os.Getenv("OLLAMA_EMBED_MODEL")
+	if embedModel == "" {
+		embedModel = "nomic-embed-text"
+	}
+
+	// Get timeout from environment or use default
+	timeoutStr := os.Getenv("OLLAMA_TIMEOUT_SECONDS")
+	timeout := 300 * time.Second // Default 5 minutes
+	if timeoutStr != "" {
+		if t, err := time.ParseDuration(timeoutStr + "s"); err == nil {
+			timeout = t
+		}
 	}
 
 	return &LLMService{
-		baseURL: ollamaURL,
-		model:   model,
-		client:  &http.Client{Timeout: 60 * time.Second},
+		baseURL:    ollamaURL,
+		llmModel:   llmModel,
+		embedModel: embedModel,
+		client:     &http.Client{Timeout: timeout},
 	}
 }
 
@@ -105,7 +136,7 @@ func (ls *LLMService) AnalyzeLogsWithAI(logFile models.LogFile, entries []models
 	}
 
 	// Create the prompt for the LLM
-	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries)
+	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, "") // Pass an empty string for similarIncidents for now
 
 	// Call the local LLM
 	response, err := ls.callLLM(prompt)
@@ -137,9 +168,9 @@ func (ls *LLMService) filterErrorEntries(entries []models.LogEntry) []models.Log
 	return errorEntries
 }
 
-func (ls *LLMService) createDetailedErrorAnalysisPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry) string {
+func (ls *LLMService) createDetailedErrorAnalysisPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry, similarIncidents string) string {
 	// Create a structured prompt focused on error analysis
-	prompt := fmt.Sprintf(`You are an expert DevOps/SRE engineer performing detailed Root Cause Analysis (RCA) on system errors. 
+	prompt := fmt.Sprintf(`You are an expert DevOps/SRE engineer performing detailed Root Cause Analysis (RCA) on system errors.
 
 Analyze the following ERROR and FATAL log entries to provide a comprehensive error analysis:
 
@@ -151,30 +182,45 @@ ERROR ENTRIES TO ANALYZE:
 `, request.Filename, len(errorEntries),
 		request.StartTime.Format("2006-01-02 15:04:05"), request.EndTime.Format("2006-01-02 15:04:05"))
 
-	// Add all error entries (no limit for errors as they're critical)
+	// Add error entries (limit to prevent timeout on very large files)
+	maxEntries := 50 // Limit to prevent timeout
+	if len(errorEntries) > maxEntries {
+		prompt += fmt.Sprintf("NOTE: Showing first %d of %d error entries for analysis\n\n", maxEntries, len(errorEntries))
+		errorEntries = errorEntries[:maxEntries]
+	}
+
 	for _, entry := range errorEntries {
 		prompt += fmt.Sprintf("[%s] %s: %s\n",
 			entry.Timestamp.Format("15:04:05"),
 			entry.Level,
 			entry.Message)
 
-		// Add metadata if present
+		// Add metadata if present (limit size)
 		if entry.Metadata != nil && len(entry.Metadata) > 0 {
 			metadata, _ := json.Marshal(entry.Metadata)
-			prompt += fmt.Sprintf("  Metadata: %s\n", string(metadata))
+			if len(metadata) > 500 { // Limit metadata size
+				prompt += fmt.Sprintf("  Metadata: %s... (truncated)\n", string(metadata[:500]))
+			} else {
+				prompt += fmt.Sprintf("  Metadata: %s\n", string(metadata))
+			}
 		}
+	}
+
+	if similarIncidents != "" {
+		prompt += "\nSIMILAR PAST INCIDENTS (for reference):\n" + similarIncidents + "\n"
 	}
 
 	prompt += `
 
-Perform a detailed Root Cause Analysis and provide your findings in the following JSON format:
+Perform a DEEP Root Cause Analysis and provide your findings in the following JSON format:
 
 {
   "summary": "A concise summary focusing on the most critical errors and their impact (2-3 sentences)",
   "severity": "low|medium|high|critical",
-  "rootCause": "The primary root cause that explains most of the errors",
+  "rootCause": "The primary root cause that explains most of the errors, with step-by-step reasoning",
+  "reasoning": "Step-by-step logical reasoning that led you to the root cause, referencing log evidence",
   "recommendations": ["specific_action1", "specific_action2", "specific_action3"],
-  
+  "furtherInvestigation": "What additional data or logs would help confirm the root cause?",
   "errorAnalysis": [
     {
       "errorPattern": "The pattern or category of this error (e.g., 'Database Connection Timeout', 'Authentication Failure')",
@@ -198,19 +244,23 @@ ANALYSIS REQUIREMENTS:
 3. Classify each error pattern as "critical" or "non-critical" based on:
    - Critical: Service outages, data loss, security issues, cascading failures
    - Non-critical: Temporary issues, retryable errors, minor performance issues
-4. Provide specific, actionable fixes for each error pattern
-5. Explain what exactly is broken for each error
-6. Identify the root cause that explains the error pattern
-7. Count total critical vs non-critical errors
-
-Respond only with valid JSON.`
+4. Provide a step-by-step logical reasoning for the root cause, referencing log evidence
+5. Suggest what additional data or logs would help confirm the root cause
+6. Be as specific and actionable as possible in your recommendations
+7. Output valid JSON only
+8. If you find similar past incidents, reference them in your reasoning
+`
 
 	return prompt
 }
 
+func (ls *LLMService) CreateDetailedErrorAnalysisPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry, similarIncidents string) string {
+	return ls.createDetailedErrorAnalysisPrompt(request, errorEntries, similarIncidents)
+}
+
 func (ls *LLMService) callLLM(prompt string) (string, error) {
 	request := OllamaGenerateRequest{
-		Model:  ls.model,
+		Model:  ls.llmModel,
 		Prompt: prompt,
 		Stream: false,
 		Options: map[string]interface{}{
@@ -225,11 +275,19 @@ func (ls *LLMService) callLLM(prompt string) (string, error) {
 	}
 
 	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
+	log.Printf("Making LLM request to %s with prompt length: %d characters", url, len(prompt))
+
+	startTime := time.Now()
 	resp, err := ls.client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	elapsed := time.Since(startTime)
+
 	if err != nil {
+		log.Printf("LLM request failed after %v: %v", elapsed, err)
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	log.Printf("LLM request completed in %v with status: %d", elapsed, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("Ollama API returned status %d", resp.StatusCode)
@@ -272,8 +330,6 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 
 	// Normalize severity
 	analysis.Severity = ls.normalizeSeverity(analysis.Severity)
-
-
 
 	// Validate error analysis
 	if analysis.ErrorAnalysis == nil {
@@ -320,10 +376,10 @@ func (ls *LLMService) normalizeErrorSeverity(severity string) string {
 
 func (ls *LLMService) generateNoErrorsAnalysis(logFile models.LogFile) *LogAnalysisResponse {
 	return &LogAnalysisResponse{
-		Summary:           fmt.Sprintf("Log file '%s' contains no ERROR or FATAL entries. System appears to be functioning normally.", logFile.Filename),
-		Severity:          "low",
-		RootCause:         "No errors detected",
-		Recommendations:   []string{"Continue monitoring for any new errors", "Review INFO and WARNING logs for potential issues"},
+		Summary:         fmt.Sprintf("Log file '%s' contains no ERROR or FATAL entries. System appears to be functioning normally.", logFile.Filename),
+		Severity:        "low",
+		RootCause:       "No errors detected",
+		Recommendations: []string{"Continue monitoring for any new errors", "Review INFO and WARNING logs for potential issues"},
 
 		ErrorAnalysis:     []DetailedErrorAnalysis{},
 		CriticalErrors:    0,
@@ -351,8 +407,6 @@ func (ls *LLMService) generateFallbackErrorAnalysis(request LogAnalysisRequest, 
 		"Review recent deployments or configuration changes",
 		"Monitor system metrics during error periods",
 	}
-
-
 
 	// Create basic error analysis
 	var errorAnalysis []DetailedErrorAnalysis
@@ -390,10 +444,10 @@ func (ls *LLMService) generateFallbackErrorAnalysis(request LogAnalysisRequest, 
 	}
 
 	return &LogAnalysisResponse{
-		Summary:           summary,
-		Severity:          severity,
-		RootCause:         rootCause,
-		Recommendations:   recommendations,
+		Summary:         summary,
+		Severity:        severity,
+		RootCause:       rootCause,
+		Recommendations: recommendations,
 
 		ErrorAnalysis:     errorAnalysis,
 		CriticalErrors:    criticalCount,
@@ -478,4 +532,75 @@ func (ls *LLMService) GetAvailableModels() ([]string, error) {
 	}
 
 	return modelNames, nil
+}
+
+// GenerateEmbedding generates an embedding for the given text using Ollama
+func (ls *LLMService) GenerateEmbedding(text string) ([]float32, error) {
+	url := ls.baseURL + "/api/embeddings"
+	request := OllamaEmbeddingRequest{
+		Model:  ls.embedModel, // Use embedding model
+		Prompt: text,
+	}
+	body, _ := json.Marshal(request)
+	resp, err := ls.client.Post(url, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("embedding API returned status %d", resp.StatusCode)
+	}
+	var embeddingResp OllamaEmbeddingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&embeddingResp); err != nil {
+		return nil, err
+	}
+	return embeddingResp.Embedding, nil
+}
+
+// FindSimilarAnalyses finds the top-N most similar past analyses by embedding cosine similarity
+func (ls *LLMService) FindSimilarAnalyses(db *gorm.DB, embedding []float32, topN int) ([]models.LogAnalysisMemory, error) {
+	var memories []models.LogAnalysisMemory
+	if err := db.Find(&memories).Error; err != nil {
+		return nil, err
+	}
+	type scored struct {
+		mem   models.LogAnalysisMemory
+		score float64
+	}
+	var scoredList []scored
+	for _, mem := range memories {
+		var emb []float32
+		if mem.Embedding != nil {
+			if embBytes, err := json.Marshal(mem.Embedding); err == nil {
+				if err := json.Unmarshal(embBytes, &emb); err == nil && len(emb) == len(embedding) {
+					score := cosineSimilarity(embedding, emb)
+					scoredList = append(scoredList, scored{mem, score})
+				}
+			}
+		}
+	}
+	// Sort by descending similarity
+	sort.Slice(scoredList, func(i, j int) bool { return scoredList[i].score > scoredList[j].score })
+	var top []models.LogAnalysisMemory
+	for i := 0; i < len(scoredList) && i < topN; i++ {
+		top = append(top, scoredList[i].mem)
+	}
+	return top, nil
+}
+
+// cosineSimilarity computes cosine similarity between two float32 slices
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
