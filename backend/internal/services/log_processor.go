@@ -19,6 +19,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 type LogProcessor struct {
 	db           *gorm.DB
 	llmService   *LLMService
@@ -92,6 +100,34 @@ func (lp *LogProcessor) callLogparserMicroservice(filePath string, logFormat str
 
 // Update ProcessLogFile to use logparser microservice for non-JSON logs
 func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
+	log.Printf("[LOG PROCESSOR] Starting to process log file %d: %s", logFileID, filePath)
+
+	// Database health check
+	var count int64
+	if err := lp.db.Model(&models.LogEntry{}).Count(&count).Error; err != nil {
+		log.Printf("[LOG PROCESSOR] Database health check failed: %v", err)
+		return fmt.Errorf("database health check failed: %w", err)
+	}
+	log.Printf("[LOG PROCESSOR] Database health check passed, current log_entries count: %d", count)
+
+	// Test database write capability
+	testEntry := models.LogEntry{
+		LogFileID: logFileID,
+		Timestamp: time.Now(),
+		Level:     "TEST",
+		Message:   "Test entry for database write verification",
+	}
+	if err := lp.db.Create(&testEntry).Error; err != nil {
+		log.Printf("[LOG PROCESSOR] Database write test failed: %v", err)
+		return fmt.Errorf("database write test failed: %w", err)
+	}
+	log.Printf("[LOG PROCESSOR] Database write test passed, created test entry with ID: %d", testEntry.ID)
+
+	// Clean up test entry
+	if err := lp.db.Delete(&testEntry).Error; err != nil {
+		log.Printf("[LOG PROCESSOR] Warning: Failed to clean up test entry: %v", err)
+	}
+
 	// Update status to processing
 	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", "processing").Error; err != nil {
 		return fmt.Errorf("failed to update log file status: %w", err)
@@ -104,6 +140,23 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 	}
 	defer file.Close()
 
+	// Test file reading - read first few lines to verify content
+	log.Printf("[LOG PROCESSOR] Testing file reading for %s", filePath)
+	file.Seek(0, 0)
+	testScanner := bufio.NewScanner(file)
+	lineCount := 0
+	for testScanner.Scan() && lineCount < 3 {
+		line := strings.TrimSpace(testScanner.Text())
+		if line != "" {
+			log.Printf("[LOG PROCESSOR] Test line %d: %s", lineCount+1, line[:min(len(line), 100)])
+		}
+		lineCount++
+	}
+	if err := testScanner.Err(); err != nil {
+		log.Printf("[LOG PROCESSOR] Error during test reading: %v", err)
+	}
+	log.Printf("[LOG PROCESSOR] File test reading completed, found %d non-empty lines in first 3", lineCount)
+
 	var entries []models.LogEntry
 	var errorCount, warningCount int
 
@@ -113,6 +166,7 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 	var nonJSONLines []string
 	const sampleLimit = 10
 
+	log.Printf("[LOG PROCESSOR] Scanning file to determine format...")
 	for scanner.Scan() {
 		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
@@ -133,7 +187,10 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		return fmt.Errorf("error reading log file: %w", err)
 	}
 
+	log.Printf("[LOG PROCESSOR] File format determined: isAllJSON=%v, totalLines=%d", isAllJSON, lineNumber)
+
 	if isAllJSON {
+		log.Printf("[LOG PROCESSOR] Processing as JSON logs...")
 		// Rewind file
 		file.Seek(0, 0)
 		scanner = bufio.NewScanner(file)
@@ -149,7 +206,9 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 				log.Printf("Failed to parse line %d: %v", lineNumber, err)
 				continue
 			}
+			log.Printf("[LOG PROCESSOR] Parsed line %d: %+v", lineNumber, parsedMap)
 			entry := NormalizeToLogEntry(logFileID, parsedMap)
+			log.Printf("[LOG PROCESSOR] LogEntry for line %d: %+v", lineNumber, entry)
 			entry.LogFileID = logFileID
 			entries = append(entries, entry)
 			switch entry.Level {
@@ -159,7 +218,9 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 				warningCount++
 			}
 		}
+		log.Printf("[LOG PROCESSOR] JSON processing complete: %d entries parsed", len(entries))
 	} else {
+		log.Printf("[LOG PROCESSOR] Processing as unstructured logs...")
 		// Infer log format from non-JSON samples using LLM
 		logFormat := ""
 		if len(nonJSONLines) > 0 {
@@ -188,14 +249,43 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 			}
 		}
 		entries = append(entries, parsedEntries...)
+		log.Printf("[LOG PROCESSOR] Unstructured processing complete: %d entries parsed", len(entries))
 	}
 
 	// Save entries in batches
 	if len(entries) > 0 {
+		log.Printf("[LOG PROCESSOR] Saving %d entries to database...", len(entries))
+
+		// Validate entries before saving
+		for i, entry := range entries {
+			if entry.LogFileID == 0 {
+				log.Printf("[LOG PROCESSOR] Error: Entry %d has zero LogFileID", i)
+			}
+			if entry.Timestamp.IsZero() {
+				log.Printf("[LOG PROCESSOR] Warning: Entry %d has zero timestamp", i)
+			}
+			if entry.Message == "" {
+				log.Printf("[LOG PROCESSOR] Warning: Entry %d has empty message", i)
+			}
+		}
+
 		if err := lp.db.CreateInBatches(entries, 100).Error; err != nil {
 			lp.updateLogFileStatus(logFileID, "failed")
+			log.Printf("[LOG PROCESSOR] Database save error: %v", err)
 			return fmt.Errorf("failed to save log entries: %w", err)
 		}
+
+		// Verify entries were saved
+		var savedCount int64
+		if err := lp.db.Model(&models.LogEntry{}).Where("log_file_id = ?", logFileID).Count(&savedCount).Error; err != nil {
+			log.Printf("[LOG PROCESSOR] Warning: Could not verify saved entries: %v", err)
+		} else {
+			log.Printf("[LOG PROCESSOR] Verified %d entries saved to database", savedCount)
+		}
+
+		log.Printf("[LOG PROCESSOR] Successfully saved %d entries to database", len(entries))
+	} else {
+		log.Printf("[LOG PROCESSOR] Warning: No entries to save")
 	}
 
 	// Update log file with final stats
@@ -208,6 +298,8 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		"processed_at":  &now,
 	}
 
+	log.Printf("[LOG PROCESSOR] Updating log file stats: entries=%d, errors=%d, warnings=%d", len(entries), errorCount, warningCount)
+
 	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Updates(updateData).Error; err != nil {
 		return fmt.Errorf("failed to update log file stats: %w", err)
 	}
@@ -217,6 +309,7 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		log.Printf("Warning: failed to delete uploaded file %s: %v", filePath, err)
 	}
 
+	log.Printf("[LOG PROCESSOR] Log file processing completed successfully")
 	return nil
 }
 
@@ -388,6 +481,16 @@ func NormalizeToLogEntry(logFileID uint, parsed map[string]interface{}) models.L
 			if s, ok := v.(string); ok {
 				return s
 			}
+			// Try to convert other types to string
+			if f, ok := v.(float64); ok {
+				return fmt.Sprintf("%.0f", f)
+			}
+			if i, ok := v.(int); ok {
+				return fmt.Sprintf("%d", i)
+			}
+			if b, ok := v.(bool); ok {
+				return fmt.Sprintf("%t", b)
+			}
 		}
 		return ""
 	}
@@ -411,15 +514,25 @@ func NormalizeToLogEntry(logFileID uint, parsed map[string]interface{}) models.L
 	getTime := func(key string) time.Time {
 		if v, ok := parsed[key]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				t, err := time.Parse(time.RFC3339Nano, s)
-				if err == nil {
-					return t
+				// Try common timestamp formats
+				formats := []string{
+					time.RFC3339Nano,
+					time.RFC3339,
+					"2006-01-02T15:04:05Z07:00",
+					"2006-01-02 15:04:05",
+					"2006-01-02T15:04:05Z",
+					"2006-01-02T15:04:05.000Z",
+					"2006-01-02T15:04:05.000000Z",
+					"2006-01-02 15:04:05.000",
+					"2006-01-02 15:04:05.000000",
 				}
-				// Try without nano
-				t, err = time.Parse(time.RFC3339, s)
-				if err == nil {
-					return t
+				for _, format := range formats {
+					t, err := time.Parse(format, s)
+					if err == nil {
+						return t
+					}
 				}
+				log.Printf("[LOG PROCESSOR] Failed to parse timestamp: %q", s)
 			}
 		}
 		return time.Time{}
@@ -455,7 +568,14 @@ func NormalizeToLogEntry(logFileID uint, parsed map[string]interface{}) models.L
 			context.CustomFields.DatabaseName = getStringFromMap(cf, "database_name")
 		}
 	}
-	return models.LogEntry{
+
+	// Extract metadata field if present
+	var logMetadata map[string]interface{}
+	if meta, ok := parsed["metadata"].(map[string]interface{}); ok {
+		logMetadata = meta
+	}
+
+	entry := models.LogEntry{
 		LogFileID:     logFileID,
 		Timestamp:     getTime("timestamp"),
 		Service:       getString("service"),
@@ -468,8 +588,21 @@ func NormalizeToLogEntry(logFileID uint, parsed map[string]interface{}) models.L
 		Context:       context,
 		Tags:          getStringSlice("tags"),
 		CorrelationId: getString("correlation_id"),
-		Metadata:      extractMetadata(parsed),
+		Metadata:      logMetadata, // Use the metadata field from the JSON
 	}
+
+	// Debug: Log if any critical fields are empty
+	if entry.Timestamp.IsZero() {
+		log.Printf("[LOG PROCESSOR] Warning: Timestamp is zero for entry")
+	}
+	if entry.Level == "" {
+		log.Printf("[LOG PROCESSOR] Warning: Level is empty for entry")
+	}
+	if entry.Message == "" {
+		log.Printf("[LOG PROCESSOR] Warning: Message is empty for entry")
+	}
+
+	return entry
 }
 
 // Helper to get string from map[string]interface{}
@@ -485,7 +618,7 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 // Add helper to extract unmapped fields as metadata
 func extractMetadata(parsed map[string]interface{}) map[string]interface{} {
 	canonical := map[string]struct{}{
-		"timestamp": {}, "service": {}, "host": {}, "environment": {}, "level": {}, "error_code": {}, "message": {}, "exception": {}, "context": {}, "tags": {}, "correlation_id": {},
+		"timestamp": {}, "service": {}, "host": {}, "environment": {}, "level": {}, "error_code": {}, "message": {}, "exception": {}, "context": {}, "tags": {}, "correlation_id": {}, "metadata": {},
 	}
 	metadata := make(map[string]interface{})
 	for k, v := range parsed {

@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -88,8 +89,13 @@ func (lc *LogController) UploadLogFile(c *gin.Context) {
 
 	// Process log file in background
 	go func() {
+		log.Printf("[UPLOAD] Starting background processing for log file %d: %s", logFile.ID, filepath)
 		if err := lc.logProcessor.ProcessLogFile(logFile.ID, filepath); err != nil {
-			fmt.Printf("Failed to process log file %d: %v\n", logFile.ID, err)
+			log.Printf("[UPLOAD] Failed to process log file %d: %v", logFile.ID, err)
+			// Update status to failed
+			lc.db.Model(&models.LogFile{}).Where("id = ?", logFile.ID).Update("status", "failed")
+		} else {
+			log.Printf("[UPLOAD] Successfully processed log file %d", logFile.ID)
 		}
 	}()
 

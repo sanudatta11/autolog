@@ -938,7 +938,11 @@ func cosineSimilarity(a, b []float32) float64 {
 func (ls *LLMService) InferLogFormatFromSamples(samples []string, logFileID *uint) (string, error) {
 	prompt := fmt.Sprintf(`You are a log parsing expert. Analyze these log lines and return ONLY a logpai/logparser format string.
 
-IMPORTANT: Return ONLY the format string, no explanations, no markdown, no extra text.
+CRITICAL INSTRUCTIONS:
+- Return ONLY the format string
+- No explanations, no markdown, no extra text
+- No colons, no quotes, no "Here is..." text
+- Just the format string, nothing else
 
 Example format strings:
 - <Date> <Time> <Level>: <Content>
@@ -949,7 +953,7 @@ Log lines to analyze:
 %s
 
 Format string:`, strings.Join(samples, "\n"))
-
+	log.Println("Prompt:", prompt)
 	resp, err := ls.callLLMWithContext(prompt, logFileID, nil, "format_inference")
 	if err != nil {
 		return "", err
@@ -965,6 +969,11 @@ Format string:`, strings.Join(samples, "\n"))
 		"Based on the log lines, the format is:",
 		"Format string:",
 		"Log format:",
+		"Here is the logpai/logparser format string for the given log lines:",
+		"The format string is:",
+		"Logpai/logparser format string:",
+		"Here is the format string:",
+		"The format is:",
 	}
 
 	for _, prefix := range prefixes {
@@ -973,6 +982,9 @@ Format string:`, strings.Join(samples, "\n"))
 			break
 		}
 	}
+
+	// Remove quotes if present
+	resp = strings.Trim(resp, `"'`)
 
 	// Take only the first line if multiple lines
 	if idx := strings.Index(resp, "\n"); idx != -1 {
