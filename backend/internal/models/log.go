@@ -1,10 +1,37 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// JSONB is a custom type for handling JSONB columns in GORM
+// It implements the Scanner and Valuer interfaces
+// so GORM can marshal/unmarshal JSON automatically
+type JSONB map[string]interface{}
+
+func (j *JSONB) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("Failed to unmarshal JSONB value: %v", value)
+	}
+	return json.Unmarshal(bytes, j)
+}
+
+func (j JSONB) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
 
 type LogLevel string
 
@@ -23,7 +50,7 @@ type LogEntry struct {
 	Level     LogLevel       `json:"level"`
 	Message   string         `json:"message" gorm:"type:text"`
 	RawData   string         `json:"rawData" gorm:"type:text"`
-	Metadata  map[string]any `json:"metadata" gorm:"type:jsonb"`
+	Metadata  JSONB          `json:"metadata" gorm:"type:jsonb"`
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
@@ -60,7 +87,7 @@ type LogAnalysis struct {
 	Severity     string         `json:"severity"` // low, medium, high, critical
 	ErrorCount   int            `json:"errorCount"`
 	WarningCount int            `json:"warningCount"`
-	Metadata     map[string]any `json:"metadata" gorm:"type:jsonb"`
+	Metadata     JSONB          `json:"metadata" gorm:"type:jsonb"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	UpdatedAt    time.Time      `json:"updatedAt"`
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`

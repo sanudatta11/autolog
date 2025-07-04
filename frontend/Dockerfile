@@ -3,6 +3,9 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
+# Install curl
+RUN apk add --no-cache curl
+
 # Copy package files
 COPY package*.json ./
 

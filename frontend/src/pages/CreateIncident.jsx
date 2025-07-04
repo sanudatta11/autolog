@@ -23,7 +23,7 @@ function CreateIncident() {
 
   const fetchUsers = async () => {
     try {
-      const response = await api.get('/api/v1/users')
+      const response = await api.get('/users')
       setUsers(response.data.data || [])
     } catch (error) {
       console.error('Error fetching users:', error)
@@ -38,7 +38,7 @@ function CreateIncident() {
     try {
       const tags = formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
       
-      const response = await api.post('/api/v1/incidents', {
+      const response = await api.post('/incidents', {
         ...formData,
         tags,
         assigneeId: formData.assigneeId || undefined

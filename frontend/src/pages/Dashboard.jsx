@@ -20,7 +20,7 @@ function Dashboard() {
   const fetchDashboardData = async () => {
     try {
       const [incidentsResponse] = await Promise.all([
-        api.get('/api/v1/incidents?limit=5')
+        api.get('/incidents?limit=5')
       ])
       
       const incidents = incidentsResponse.data.data || []

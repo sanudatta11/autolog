@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/incident-sage/backend/internal/database"
 	"github.com/incident-sage/backend/internal/handlers"
@@ -17,6 +17,29 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 )
+
+func CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		log.Println("CORS Origin:", origin)
+
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+
+		// Handle preflight request
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusOK)
+			return
+		} else {
+			log.Println("Method is not OPTIONS", c.Request.Method, "from", origin)
+		}
+
+		c.Next()
+	}
+}
 
 func main() {
 	// Load environment variables
@@ -44,13 +67,12 @@ func main() {
 	// Create router
 	r := gin.Default()
 
-	// CORS configuration
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{os.Getenv("CORS_ORIGIN")}
-	config.AllowCredentials = true
-	config.AddAllowHeaders("Authorization")
-	r.Use(cors.New(config))
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
 
+	r.Use(CORSMiddleware())
+
+	r.Use(gin.Recovery())
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
 		// Check database connectivity
@@ -119,7 +141,6 @@ func main() {
 
 		c.JSON(statusCode, response)
 	})
-
 	// API routes
 	api := r.Group("/api/v1")
 	{
@@ -140,14 +161,12 @@ func main() {
 			{
 				users.GET("/me", handlers.GetCurrentUser)
 				users.PUT("/me", handlers.UpdateCurrentUser)
-				users.GET("/", handlers.GetUsers)
+				users.GET("", handlers.GetUsers)
 			}
 
 			// Incidents
 			incidents := protected.Group("/incidents")
 			{
-				incidents.GET("/", handlers.GetIncidents)
-				incidents.POST("/", handlers.CreateIncident)
 				incidents.GET("/:id", handlers.GetIncident)
 				incidents.PUT("/:id", handlers.UpdateIncident)
 				incidents.DELETE("/:id", handlers.DeleteIncident)
@@ -155,6 +174,10 @@ func main() {
 				// Incident updates
 				incidents.GET("/:id/updates", handlers.GetIncidentUpdates)
 				incidents.POST("/:id/updates", handlers.CreateIncidentUpdate)
+
+				incidents.GET("", handlers.GetIncidents)
+				incidents.POST("", handlers.CreateIncident)
+
 			}
 
 			// Initialize LLM service
@@ -168,11 +191,11 @@ func main() {
 			logs := protected.Group("/logs")
 			{
 				logs.POST("/upload", logHandler.UploadLogFile)
-				logs.GET("/", logHandler.GetLogFiles)
 				logs.GET("/:id", logHandler.GetLogFile)
 				logs.POST("/:id/analyze", logHandler.AnalyzeLogFile)
 				logs.GET("/:id/analyses", logHandler.GetLogAnalyses)
 				logs.DELETE("/:id", logHandler.DeleteLogFile)
+				logs.GET("", logHandler.GetLogFiles)
 			}
 		}
 	}

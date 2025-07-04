@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
 
   const fetchCurrentUser = async () => {
     try {
-      const response = await api.get('/api/v1/users/me')
+      const response = await api.get('/users/me')
       setUser(response.data.data)
     } catch (error) {
       localStorage.removeItem('token')
@@ -39,7 +39,7 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     try {
-      const response = await api.post('/api/v1/auth/login', { email, password })
+      const response = await api.post('/auth/login', { email, password })
       const { token, user } = response.data.data
       
       localStorage.setItem('token', token)

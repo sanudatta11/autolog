@@ -1,15 +1,18 @@
 # IncidentSage Makefile
 # Essential commands for development and deployment
 
-.PHONY: help dev docker-dev docker-clean logs shell health status clean setup setup-full setup-ollama ollama-status ollama-pull test-ai rebuild-backend rebuild-frontend rebuild-all restart-all
+.PHONY: dev docker-dev docker-clean logs shell health status clean setup setup-full setup-ollama ollama-status ollama-pull test-ai rebuild-backend rebuild-frontend rebuild-all restart-all dev-local stop-services run-backend run-frontend build-and-up
 
-# Default target
-help: ## Show this help message
+
 	@echo "🚀 IncidentSage - Essential Commands"
 	@echo "===================================="
 	@echo ""
 	@echo "📋 Development Commands:"
 	@echo "  dev              Start development environment with Docker"
+	@echo "  dev-local        Start services in Docker, run backend/frontend locally"
+	@echo "  run-backend      Run backend locally (requires dev-local first)"
+	@echo "  run-frontend     Run frontend locally (requires dev-local first)"
+	@echo "  stop-services    Stop Docker services (database, ollama, adminer)"
 	@echo "  docker-dev       Start development environment with Docker in background"
 	@echo "  rebuild-backend  Rebuild backend container"
 	@echo "  rebuild-frontend Rebuild frontend container"
@@ -45,6 +48,29 @@ help: ## Show this help message
 dev: ## Start development environment with Docker
 	@echo "🐳 Starting Docker development environment..."
 	@docker-compose up
+
+dev-local: ## Start services in Docker, run backend/frontend locally
+	@echo " Starting services in Docker (database, ollama, adminer)..."
+	@docker-compose up -d postgres ollama adminer
+
+stop-services: ## Stop Docker services (database, ollama, adminer)
+	@echo "🛑 Stopping Docker services..."
+	@docker-compose stop postgres ollama adminer
+	@echo "✅ Services stopped!"
+
+run-backend: ## Run backend locally (requires dev-local first)
+	@echo "🚀 Starting backend locally..."
+	@echo "   Make sure you've run 'make dev-local' first!"
+ifeq ($(OS),Windows_NT)
+	cd backend && powershell -Command "go run cmd/server/main.go"
+else
+	cd backend && go run cmd/server/main.go
+endif
+
+run-frontend: ## Run frontend locally (requires dev-local first)
+	@echo "🌐 Starting frontend locally..."
+	@echo "   Make sure you've run 'make dev-local' first!"
+	@cd frontend && npm run dev
 
 docker-dev: ## Start development environment with Docker in background
 	@echo "🐳 Starting Docker development environment in background..."
@@ -184,3 +210,7 @@ urls: ## Show all service URLs
 	@echo "🔧 Backend: http://localhost:8080"
 	@echo "🗄️ Adminer: http://localhost:8081"
 	@echo "🤖 Ollama: http://localhost:11434" 
+
+build-and-up: ## Build all images and start the full stack
+	docker-compose build
+	docker-compose up -d 

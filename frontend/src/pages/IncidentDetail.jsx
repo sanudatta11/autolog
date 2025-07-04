@@ -18,8 +18,8 @@ function IncidentDetail() {
   const fetchIncidentData = async () => {
     try {
       const [incidentResponse, updatesResponse] = await Promise.all([
-        api.get(`/api/v1/incidents/${id}`),
-        api.get(`/api/v1/incidents/${id}/updates`)
+        api.get(`/incidents/${id}`),
+        api.get(`/incidents/${id}/updates`)
       ])
       
       setIncident(incidentResponse.data.data)
@@ -37,7 +37,7 @@ function IncidentDetail() {
 
     setSubmitting(true)
     try {
-      await api.post(`/api/v1/incidents/${id}/updates`, {
+      await api.post(`/incidents/${id}/updates`, {
         content: newUpdate,
         type: 'COMMENT'
       })

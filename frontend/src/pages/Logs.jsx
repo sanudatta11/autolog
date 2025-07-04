@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { apiService } from '../services/apiService';
+import api from '../services/api';
 
 const Logs = () => {
   const { token } = useAuth();
@@ -20,8 +20,8 @@ const Logs = () => {
   const fetchLogFiles = async () => {
     setLoading(true);
     try {
-      const response = await apiService.get('/logs');
-      setLogFiles(response.logFiles || []);
+      const response = await api.get('/logs');
+      setLogFiles(response.data.logFiles || []);
     } catch (error) {
       setMessage('Failed to fetch log files: ' + error.message);
     } finally {
@@ -57,7 +57,7 @@ const Logs = () => {
     formData.append('logfile', selectedFile);
 
     try {
-      const response = await apiService.post('/logs/upload', formData, {
+      const response = await api.post('/logs/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -78,9 +78,9 @@ const Logs = () => {
 
   const handleViewLogFile = async (logFile) => {
     try {
-      const response = await apiService.get(`/logs/${logFile.id}`);
-      setSelectedLogFile(response.logFile);
-      setLogEntries(response.logFile.entries || []);
+      const response = await api.get(`/logs/${logFile.id}`);
+      setSelectedLogFile(response.data.logFile);
+      setLogEntries(response.data.logFile.entries || []);
     } catch (error) {
       setMessage('Failed to fetch log file details: ' + error.message);
     }
@@ -88,12 +88,12 @@ const Logs = () => {
 
   const handleAnalyze = async (logFileId) => {
     try {
-      const response = await apiService.post(`/logs/${logFileId}/analyze`);
-      setMessage('Analysis completed: ' + response.message);
+      const response = await api.post(`/logs/${logFileId}/analyze`);
+      setMessage('Analysis completed: ' + response.data.message);
       
       // Fetch analyses
-      const analysesResponse = await apiService.get(`/logs/${logFileId}/analyses`);
-      setAnalyses(analysesResponse.analyses || []);
+      const analysesResponse = await api.get(`/logs/${logFileId}/analyses`);
+      setAnalyses(analysesResponse.data.analyses || []);
     } catch (error) {
       setMessage('Analysis failed: ' + error.message);
     }
@@ -105,7 +105,7 @@ const Logs = () => {
     }
 
     try {
-      await apiService.delete(`/logs/${logFileId}`);
+      await api.delete(`/logs/${logFileId}`);
       setMessage('Log file deleted successfully');
       fetchLogFiles();
       

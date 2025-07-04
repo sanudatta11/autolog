@@ -14,7 +14,7 @@ function Incidents() {
 
   const fetchIncidents = async () => {
     try {
-      const response = await api.get('/api/v1/incidents')
+      const response = await api.get('/incidents')
       setIncidents(response.data.data || [])
     } catch (error) {
       console.error('Error fetching incidents:', error)
