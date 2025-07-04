@@ -113,7 +113,11 @@ func NewLLMService(ollamaURL, llmModel string) *LLMService {
 }
 
 // AnalyzeLogsWithAI performs AI-powered analysis of log entries with focus on errors
-func (ls *LLMService) AnalyzeLogsWithAI(logFile models.LogFile, entries []models.LogEntry) (*LogAnalysisResponse, error) {
+func (ls *LLMService) AnalyzeLogsWithAI(logFile *models.LogFile, entries []models.LogEntry) (*LogAnalysisResponse, error) {
+	if logFile == nil {
+		return nil, fmt.Errorf("logFile is nil")
+	}
+
 	// Filter only ERROR and FATAL entries for analysis
 	errorEntries := ls.filterErrorEntries(entries)
 
@@ -321,14 +325,25 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 
 	cleanResponse = strings.TrimSpace(cleanResponse)
 
+	// Defensive: Check if the response looks like JSON
+	if !strings.HasPrefix(cleanResponse, "{") && !strings.HasPrefix(cleanResponse, "[") {
+		log.Printf("LLM returned non-JSON response: %q", cleanResponse)
+		return nil, fmt.Errorf("LLM did not return valid JSON. Raw response: %q", cleanResponse)
+	}
+
 	var analysis LogAnalysisResponse
 	if err := json.Unmarshal([]byte(cleanResponse), &analysis); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON response: %w", err)
+		log.Printf("Failed to parse JSON from LLM: %q", cleanResponse)
+		return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
 	}
 
 	// Validate and normalize the response
 	if analysis.Summary == "" {
 		analysis.Summary = "Error analysis completed but no summary generated."
+	}
+
+	if analysis.RootCause == "" {
+		analysis.RootCause = "Unable to determine root cause"
 	}
 
 	// Normalize severity
@@ -342,6 +357,11 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 	// Normalize error analysis severity
 	for i := range analysis.ErrorAnalysis {
 		analysis.ErrorAnalysis[i].Severity = ls.normalizeErrorSeverity(analysis.ErrorAnalysis[i].Severity)
+	}
+
+	// Ensure recommendations is not nil
+	if analysis.Recommendations == nil {
+		analysis.Recommendations = []string{}
 	}
 
 	return &analysis, nil
@@ -377,7 +397,7 @@ func (ls *LLMService) normalizeErrorSeverity(severity string) string {
 	}
 }
 
-func (ls *LLMService) generateNoErrorsAnalysis(logFile models.LogFile) *LogAnalysisResponse {
+func (ls *LLMService) generateNoErrorsAnalysis(logFile *models.LogFile) *LogAnalysisResponse {
 	return &LogAnalysisResponse{
 		Summary:         fmt.Sprintf("Log file '%s' contains no ERROR or FATAL entries. System appears to be functioning normally.", logFile.Filename),
 		Severity:        "low",

@@ -142,7 +142,7 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 }
 
 // performRCAAnalysisWithErrorTracking is like performRCAAnalysis but tracks which chunk failed
-func (js *JobService) performRCAAnalysisWithErrorTracking(logFile models.LogFile, failedChunk *int) ([]*LogAnalysisResponse, error) {
+func (js *JobService) performRCAAnalysisWithErrorTracking(logFile *models.LogFile, failedChunk *int) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("failed to load log entries: %w", err)
@@ -173,7 +173,7 @@ func (js *JobService) performRCAAnalysisWithErrorTracking(logFile models.LogFile
 }
 
 // aggregatePartialAnalyses aggregates chunk results into a final RCA report using the LLM
-func (js *JobService) aggregatePartialAnalyses(logFile models.LogFile, partials []*LogAnalysisResponse) (*LogAnalysisResponse, error) {
+func (js *JobService) aggregatePartialAnalyses(logFile *models.LogFile, partials []*LogAnalysisResponse) (*LogAnalysisResponse, error) {
 	if len(partials) == 0 {
 		return nil, fmt.Errorf("no partial analyses to aggregate")
 	}
@@ -192,7 +192,9 @@ func (js *JobService) aggregatePartialAnalyses(logFile models.LogFile, partials 
 
 	aggregated, err := js.llmService.parseDetailedLLMResponse(response)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to parse LLM aggregation response: %w", err)
+		log.Printf("LLM aggregation response parsing failed: %v", err)
+		log.Printf("Raw LLM response: %q", response)
+		return nil, fmt.Errorf("failed to parse LLM aggregation response: %w", err)
 	}
 
 	if aggregated.Summary == "" || aggregated.RootCause == "" {

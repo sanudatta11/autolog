@@ -377,7 +377,7 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 	}
 
 	// Get detailed error analysis
-	errorAnalysis, err := lc.llmService.AnalyzeLogsWithAI(logFile, logFile.Entries)
+	errorAnalysis, err := lc.llmService.AnalyzeLogsWithAI(&logFile, logFile.Entries)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error analysis failed: %v", err)})
 		return

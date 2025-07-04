@@ -17,11 +17,10 @@ const (
 
 type Job struct {
 	ID          uint           `json:"id" gorm:"primaryKey"`
-	Type        string         `json:"type" gorm:"not null"` // "rca_analysis"
-	LogFileID   uint           `json:"logFileId" gorm:"not null"`
-	LogFile     LogFile        `json:"logFile" gorm:"foreignKey:LogFileID"`
+	Type        string         `json:"type" gorm:"not null"`            // "rca_analysis"
+	LogFileID   uint           `json:"logFileId" gorm:"not null;index"` // Foreign key to LogFile
 	Status      JobStatus      `json:"status" gorm:"not null;default:'pending'"`
-	Progress    int            `json:"progress" gorm:"default:0"` // 0-100
+	Progress    int            `json:"progress" gorm:"default:0"`
 	Result      JSONB          `json:"result" gorm:"type:jsonb"`
 	Error       string         `json:"error"`
 	StartedAt   *time.Time     `json:"startedAt"`
@@ -29,6 +28,9 @@ type Job struct {
 	CreatedAt   time.Time      `json:"createdAt"`
 	UpdatedAt   time.Time      `json:"updatedAt"`
 	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+
+	// Relationship (optional, not a DB constraint)
+	LogFile *LogFile `json:"logFile,omitempty" gorm:"foreignKey:LogFileID;references:ID"`
 }
 
 func (Job) TableName() string {

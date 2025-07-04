@@ -350,6 +350,7 @@ const Logs = () => {
           <div className="mb-6">
             <RCAnalysis 
               logFileId={selectedLogFile.id} 
+              initialStatus={selectedLogFile.rcaAnalysisStatus || 'idle'}
               onAnalysisComplete={(results) => {
                 setMessage('RCA analysis completed successfully!');
                 fetchLogFiles();

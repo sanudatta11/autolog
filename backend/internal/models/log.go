@@ -68,14 +68,14 @@ type LogFile struct {
 	WarningCount      int            `json:"warningCount" gorm:"default:0"`
 	ProcessedAt       *time.Time     `json:"processedAt"`
 	RCAAnalysisStatus string         `json:"rcaAnalysisStatus" gorm:"default:'not_started'"` // not_started, pending, running, completed, failed
-	RCAAnalysisJobID  *uint          `json:"rcaAnalysisJobId"`
+	RCAAnalysisJobID  *uint          `json:"rcaAnalysisJobId"`                               // Just a pointer, no FK constraint
 	CreatedAt         time.Time      `json:"createdAt"`
 	UpdatedAt         time.Time      `json:"updatedAt"`
 	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relationships
 	Entries        []LogEntry `json:"entries,omitempty" gorm:"foreignKey:LogFileID"`
-	RCAAnalysisJob *Job       `json:"rcaAnalysisJob,omitempty" gorm:"foreignKey:RCAAnalysisJobID"`
+	RCAAnalysisJob *Job       `json:"rcaAnalysisJob,omitempty" gorm:"-"` // No DB-level FK constraint
 }
 
 type LogAnalysis struct {

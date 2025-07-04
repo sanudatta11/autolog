@@ -244,7 +244,7 @@ func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, err
 
 	// Use AI-powered analysis if LLM service is available
 	if lp.llmService != nil {
-		aiAnalysis, err := lp.llmService.AnalyzeLogsWithAI(logFile, logFile.Entries)
+		aiAnalysis, err := lp.llmService.AnalyzeLogsWithAI(&logFile, logFile.Entries)
 		if err != nil {
 			log.Printf("AI analysis failed, falling back to basic analysis: %v", err)
 			// Fallback to basic analysis

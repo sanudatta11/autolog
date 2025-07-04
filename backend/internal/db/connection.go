@@ -1,11 +1,13 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
 	"github.com/autolog/backend/internal/models"
+	_ "github.com/lib/pq"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -13,8 +15,49 @@ import (
 
 var DB *gorm.DB
 
+func ensureDatabaseExists() error {
+	host := os.Getenv("DB_HOST")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	port := os.Getenv("DB_PORT")
+	sslmode := os.Getenv("DB_SSLMODE")
+	dbName := os.Getenv("DB_NAME")
+
+	// Connect to the default 'postgres' database
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%s sslmode=%s",
+		host, user, password, port, sslmode)
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Check if the database exists
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)"
+	if err := db.QueryRow(query, dbName).Scan(&exists); err != nil {
+		return err
+	}
+
+	if !exists {
+		// Create the database
+		_, err = db.Exec("CREATE DATABASE " + dbName)
+		if err != nil {
+			return err
+		}
+		log.Printf("✅ Database %s created", dbName)
+	} else {
+		log.Printf("Database %s already exists", dbName)
+	}
+	return nil
+}
+
 // Connect initializes the database connection
 func Connect() {
+	if err := ensureDatabaseExists(); err != nil {
+		log.Fatalf("Failed to ensure database exists: %v", err)
+	}
+
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		os.Getenv("DB_HOST"),
 		os.Getenv("DB_USER"),
@@ -46,6 +89,15 @@ func AutoMigrate() {
 		return
 	}
 	log.Println("✅ User table migrated successfully")
+
+	// Migrate Job model FIRST to break circular dependency
+	log.Println("Testing migration with Job model...")
+	err = DB.AutoMigrate(&models.Job{})
+	if err != nil {
+		log.Printf("Job migration failed: %v", err)
+		return
+	}
+	log.Println("✅ Job table migrated successfully")
 
 	// Then add LogFile
 	log.Println("Testing migration with LogFile model...")
@@ -90,15 +142,6 @@ func AutoMigrate() {
 		return
 	}
 	log.Println("✅ LogAnalysisFeedback table migrated successfully")
-
-	// Add the new Job model for background processing
-	log.Println("Testing migration with Job model...")
-	err = DB.AutoMigrate(&models.Job{})
-	if err != nil {
-		log.Printf("Job migration failed: %v", err)
-		return
-	}
-	log.Println("✅ Job table migrated successfully")
 
 	log.Println("✅ All database migrations completed successfully")
 }

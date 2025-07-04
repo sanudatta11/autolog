@@ -1,13 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 
-const RCAnalysis = ({ logFileId, onAnalysisComplete }) => {
+const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) => {
   const [jobId, setJobId] = useState(null);
-  const [status, setStatus] = useState('idle'); // idle, pending, running, completed, failed
+  const [status, setStatus] = useState(initialStatus); // idle, pending, running, completed, failed
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [results, setResults] = useState(null);
   const [polling, setPolling] = useState(false);
+
+  // On mount: if status is pending/running and no jobId, fetch the current RCA job and start polling
+  useEffect(() => {
+    if ((status === 'pending' || status === 'running') && !jobId) {
+      api.get(`/logs/${logFileId}/analyses`).then(res => {
+        const jobs = res.data.analyses || [];
+        const activeJob = jobs.find(j => j.status === 'pending' || j.status === 'running');
+        if (activeJob) {
+          setJobId(activeJob.id);
+          setProgress(activeJob.progress || 0);
+          setPolling(true);
+          pollJobStatus(activeJob.id);
+        }
+      }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, jobId, logFileId]);
 
   const startAnalysis = async () => {
     try {
