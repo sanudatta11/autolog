@@ -61,7 +61,9 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
             if not os.path.exists(structured_path):
                 raise HTTPException(status_code=500, detail="Logparser failed to produce structured output.")
             df = pd.read_csv(structured_path)
-            return JSONResponse(content=df.to_dict(orient="records"))
+            # Return each row as a raw dict for normalization in Go backend
+            records = df.to_dict(orient="records")
+            return JSONResponse(content=records)
     except Exception as e:
         print(f"[DEBUG] Exception in /parse: {e}")
         raise HTTPException(status_code=500, detail=str(e)) 

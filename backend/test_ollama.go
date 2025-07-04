@@ -47,14 +47,20 @@ func main() {
 		{
 			ID:        1,
 			LogFileID: 1,
-			Level:     models.LogLevelError,
+			Level:     "ERROR",
 			Message:   "Test error message",
 			Timestamp: time.Now(),
 		},
 	}
 
-	response, err := llmService.AnalyzeLogsWithAI(testLogFile, testEntries)
+	// Test AI analysis
+	response, err := llmService.AnalyzeLogsWithAI(&testLogFile, testEntries, nil) // No job ID for test
 	elapsed := time.Since(startTime)
+
+	if err != nil {
+		fmt.Printf("AI analysis failed: %v\n", err)
+		return
+	}
 
 	if err != nil {
 		log.Printf("Analysis failed after %v: %v", elapsed, err)

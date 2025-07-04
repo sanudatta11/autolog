@@ -43,17 +43,48 @@ const (
 	LogLevelFatal   LogLevel = "FATAL"
 )
 
+type Exception struct {
+	Type       string   `json:"type" gorm:"type:text"`
+	StackTrace []string `json:"stack_trace" gorm:"type:jsonb"`
+}
+
+type RequestContext struct {
+	Method string `json:"method" gorm:"type:text"`
+	Url    string `json:"url" gorm:"type:text"`
+	Ip     string `json:"ip" gorm:"type:text"`
+}
+
+type CustomFields struct {
+	RetryAttempt int    `json:"retry_attempt" gorm:"type:int"`
+	DatabaseName string `json:"database_name" gorm:"type:text"`
+}
+
+type Context struct {
+	TransactionId string         `json:"transaction_id" gorm:"type:text"`
+	UserId        string         `json:"user_id" gorm:"type:text"`
+	Request       RequestContext `json:"request" gorm:"embedded;embeddedPrefix:request_"`
+	CustomFields  CustomFields   `json:"custom_fields" gorm:"embedded;embeddedPrefix:custom_"`
+}
+
 type LogEntry struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	LogFileID uint           `json:"logFileId" gorm:"not null"`
-	Timestamp time.Time      `json:"timestamp"`
-	Level     LogLevel       `json:"level"`
-	Message   string         `json:"message" gorm:"type:text"`
-	RawData   string         `json:"rawData" gorm:"type:text"`
-	Metadata  JSONB          `json:"metadata" gorm:"type:jsonb"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
+	ID            uint           `json:"id" gorm:"primaryKey"`
+	LogFileID     uint           `json:"logFileId" gorm:"not null;index"`
+	Timestamp     time.Time      `json:"timestamp" gorm:"not null"`
+	Service       string         `json:"service" gorm:"type:text"`
+	Host          string         `json:"host" gorm:"type:text"`
+	Environment   string         `json:"environment" gorm:"type:text"`
+	Level         string         `json:"level" gorm:"type:text"`
+	ErrorCode     string         `json:"error_code" gorm:"type:text"`
+	Message       string         `json:"message" gorm:"type:text"`
+	Exception     Exception      `json:"exception" gorm:"embedded;embeddedPrefix:exception_"`
+	Context       Context        `json:"context" gorm:"embedded;embeddedPrefix:context_"`
+	Tags          []string       `json:"tags" gorm:"type:jsonb"`
+	CorrelationId string         `json:"correlation_id" gorm:"type:text"`
+	Metadata      JSONB          `json:"metadata" gorm:"type:jsonb"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
+	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
+	LogFile       *LogFile       `json:"logFile,omitempty" gorm:"foreignKey:LogFileID"`
 }
 
 type LogFile struct {

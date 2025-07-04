@@ -110,6 +110,16 @@ func AutoMigrate() {
 
 	// Then add LogEntry
 	log.Println("Testing migration with LogEntry model...")
+	// Drop old log_entries table if it exists
+	db, err := DB.DB()
+	if err == nil {
+		_, dropErr := db.Exec("DROP TABLE IF EXISTS log_entries CASCADE;")
+		if dropErr != nil {
+			log.Printf("Warning: failed to drop old log_entries table: %v", dropErr)
+		} else {
+			log.Println("Dropped old log_entries table.")
+		}
+	}
 	err = DB.AutoMigrate(&models.LogEntry{})
 	if err != nil {
 		log.Printf("LogEntry migration failed: %v", err)

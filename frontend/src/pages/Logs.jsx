@@ -365,7 +365,6 @@ const Logs = () => {
             </div>
           )}
           
-           
 
           {/* Log Entries Toggle */}
           <div className="flex items-center mb-2">

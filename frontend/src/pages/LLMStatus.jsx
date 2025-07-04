@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
+import LLMAPICalls from '../components/LLMAPICalls';
 
 const LLMStatus = () => {
   const { token } = useAuth();
@@ -162,6 +163,11 @@ const LLMStatus = () => {
         <p className="text-xs text-gray-600 mt-2">
           Note: Larger models provide better analysis but require more memory and processing time.
         </p>
+      </div>
+
+      {/* LLM API Calls Section */}
+      <div className="mt-8">
+        <LLMAPICalls />
       </div>
     </div>
   );

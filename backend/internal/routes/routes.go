@@ -70,6 +70,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB) {
 			admin := protected.Group("/admin")
 			{
 				admin.GET("/logs", logController.GetAdminLogs)
+				admin.GET("/llm-api-calls", logController.GetLLMAPICalls)
+				admin.DELETE("/llm-api-calls", logController.ClearLLMAPICalls)
+				admin.GET("/log-files/:id", logController.GetLogFileDetails)
+				admin.GET("/jobs/:id", logController.GetJobDetails)
 			}
 
 			// Log Analysis Memory Feedback
@@ -84,6 +88,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB) {
 			llm := protected.Group("/llm")
 			{
 				llm.GET("/status", logController.GetLLMStatus)
+				llm.GET("/api-calls", logController.GetLLMAPICalls)
+				llm.DELETE("/api-calls", logController.ClearLLMAPICalls)
 			}
 		}
 	}

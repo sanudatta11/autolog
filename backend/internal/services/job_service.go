@@ -290,7 +290,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", currentChunk)
 		log.Printf("[RCA] Processing chunk %d/%d for job %d", currentChunk, *totalChunks, jobID)
 		log.Printf("[RCA] Analyzing chunk %d/%d (entries %d-%d) for job %d...", currentChunk, *totalChunks, i*chunkSize+1, i*chunkSize+len(chunk), jobID)
-		analysis, err := js.llmService.AnalyzeLogsWithAI(logFile, chunk)
+		analysis, err := js.llmService.AnalyzeLogsWithAI(logFile, chunk, &jobID)
 		if err != nil {
 			log.Printf("[RCA] Chunk %d failed: %v", currentChunk, err)
 			*failedChunk = currentChunk
@@ -327,7 +327,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCountWithTimeou
 		log.Printf("[RCA] Processing chunk %d/%d for job %d", currentChunk, *totalChunks, jobID)
 		log.Printf("[RCA] Analyzing chunk %d/%d (entries %d-%d) for job %d...", currentChunk, *totalChunks, i*chunkSize+1, i*chunkSize+len(chunk), jobID)
 		log.Printf("[RCA] Starting LLM request for chunk %d/%d...", currentChunk, *totalChunks)
-		analysis, err := js.llmService.AnalyzeLogsWithAIWithTimeout(logFile, chunk, timeout)
+		analysis, err := js.llmService.AnalyzeLogsWithAIWithTimeout(logFile, chunk, timeout, &jobID)
 		if err != nil {
 			log.Printf("[RCA] Chunk %d failed: %v", currentChunk, err)
 			*failedChunk = currentChunk
@@ -347,7 +347,7 @@ func (js *JobService) performRCAAnalysisNoChunking(logFile *models.LogFile, jobI
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("no log entries found for analysis")
 	}
-	analysis, err := js.llmService.AnalyzeLogsWithAIWithTimeout(logFile, entries, timeout)
+	analysis, err := js.llmService.AnalyzeLogsWithAIWithTimeout(logFile, entries, timeout, &jobID)
 	if err != nil {
 		return nil, err
 	}

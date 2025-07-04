@@ -376,16 +376,16 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 	}
 
 	// Get detailed error analysis
-	errorAnalysis, err := lc.llmService.AnalyzeLogsWithAI(&logFile, logFile.Entries)
+	errorAnalysis, err := lc.llmService.AnalyzeLogsWithAI(&logFile, logFile.Entries, nil) // No job ID for direct analysis
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error analysis failed: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("AI analysis failed: %v", err)})
 		return
 	}
 
 	// Filter only ERROR and FATAL entries for the response
 	var errorEntries []models.LogEntry
 	for _, entry := range logFile.Entries {
-		if entry.Level == models.LogLevelError || entry.Level == models.LogLevelFatal {
+		if entry.Level == "ERROR" || entry.Level == "FATAL" {
 			errorEntries = append(errorEntries, entry)
 		}
 	}
@@ -566,6 +566,57 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Log file deleted successfully"})
 }
 
+// GetLLMAPICalls returns the history of LLM API calls
+func (lc *LogController) GetLLMAPICalls(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Check if user is admin
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	if user.Role != "ADMIN" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	apiCalls := lc.llmService.GetAPICalls()
+	c.JSON(http.StatusOK, gin.H{
+		"apiCalls": apiCalls,
+		"count":    len(apiCalls),
+	})
+}
+
+// ClearLLMAPICalls clears the LLM API call history
+func (lc *LogController) ClearLLMAPICalls(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Check if user is admin
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	if user.Role != "ADMIN" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	lc.llmService.ClearAPICalls()
+	c.JSON(http.StatusOK, gin.H{"message": "LLM API call history cleared"})
+}
+
 // FeedbackRequest represents the payload for feedback submission
 type FeedbackRequest struct {
 	IsCorrect  bool   `json:"isCorrect"`
@@ -666,4 +717,84 @@ func (lc *LogController) GetAllRCAJobs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+}
+
+// GetLogFileDetails returns log file details for admin (used in LLM API call context)
+func (lc *LogController) GetLogFileDetails(c *gin.Context) {
+	// Check if user is admin
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Get user to check if admin
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	if user.Role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
+		return
+	}
+
+	var logFile models.LogFile
+	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"logFile": logFile})
+}
+
+// GetJobDetails returns job details for admin (used in LLM API call context)
+func (lc *LogController) GetJobDetails(c *gin.Context) {
+	// Check if user is admin
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Get user to check if admin
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	if user.Role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	jobID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
+		return
+	}
+
+	job, err := lc.jobService.GetJobStatus(uint(jobID))
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch job"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"job": job})
 }
