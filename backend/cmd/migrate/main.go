@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/autolog/backend/internal/database"
+	"github.com/autolog/backend/internal/db"
 	"github.com/joho/godotenv"
 )
 
@@ -14,11 +14,11 @@ func main() {
 	}
 
 	// Connect to database
-	database.Connect()
+	db.Connect()
 
 	// Run migrations
 	log.Println("Running database migrations...")
-	database.AutoMigrate()
+	db.AutoMigrate()
 
 	log.Println("✅ Database migrations completed successfully!")
 }

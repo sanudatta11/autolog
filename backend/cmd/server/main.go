@@ -8,11 +8,9 @@ import (
 	"os"
 	"time"
 
-	"autolog/backend/internal/database"
-	"autolog/backend/internal/handlers"
-	"autolog/backend/internal/middleware"
-	"autolog/backend/internal/models"
-	"autolog/backend/internal/services"
+	"github.com/autolog/backend/internal/db"
+	"github.com/autolog/backend/internal/models"
+	"github.com/autolog/backend/internal/routes"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -49,8 +47,8 @@ func main() {
 	}
 
 	// Connect to database
-	database.Connect()
-	database.AutoMigrate()
+	db.Connect()
+	db.AutoMigrate()
 
 	// Seed database with initial data if in development
 	if os.Getenv("ENV") == "development" {
@@ -72,16 +70,16 @@ func main() {
 	r.RedirectFixedPath = false
 
 	r.Use(CORSMiddleware())
-
 	r.Use(gin.Recovery())
+
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
 		// Check database connectivity
 		var dbStatus string
 		var dbError error
 
-		if database.DB != nil {
-			sqlDB, err := database.DB.DB()
+		if db.DB != nil {
+			sqlDB, err := db.DB.DB()
 			if err != nil {
 				dbStatus = "error"
 				dbError = err
@@ -97,22 +95,6 @@ func main() {
 		} else {
 			dbStatus = "error"
 			dbError = fmt.Errorf("database connection not initialized")
-		}
-
-		// Check LLM service
-		var llmStatus string
-		var llmError error
-
-		llmService := services.NewLLMService(
-			os.Getenv("OLLAMA_URL"),
-			os.Getenv("OLLAMA_MODEL"),
-		)
-
-		if err := llmService.CheckLLMHealth(); err != nil {
-			llmStatus = "error"
-			llmError = err
-		} else {
-			llmStatus = "ok"
 		}
 
 		// Determine overall health
@@ -133,66 +115,14 @@ func main() {
 					"status": dbStatus,
 					"error":  dbError,
 				},
-				"llm": gin.H{
-					"status": llmStatus,
-					"error":  llmError,
-				},
 			},
 		}
 
 		c.JSON(statusCode, response)
 	})
-	// API routes
-	api := r.Group("/api/v1")
-	{
-		// Auth routes
-		auth := api.Group("/auth")
-		{
-			auth.POST("/login", handlers.Login)
-			auth.POST("/register", handlers.Register)
-			auth.POST("/refresh", handlers.RefreshToken)
-		}
 
-		// Protected routes
-		protected := api.Group("/")
-		protected.Use(middleware.AuthMiddleware())
-		{
-			// Users
-			users := protected.Group("/users")
-			{
-				users.GET("/me", handlers.GetCurrentUser)
-				users.PUT("/me", handlers.UpdateCurrentUser)
-				users.GET("", handlers.GetUsers)
-			}
-
-
-
-			// Initialize LLM service
-			llmService := services.NewLLMService(
-				os.Getenv("OLLAMA_URL"),
-				os.Getenv("OLLAMA_MODEL"),
-			)
-
-			// Logs
-			logHandler := handlers.NewLogHandler(database.DB, "uploads/logs", llmService)
-			logs := protected.Group("/logs")
-			{
-				logs.POST("/upload", logHandler.UploadLogFile)
-				logs.GET("/:id", logHandler.GetLogFile)
-				logs.POST("/:id/analyze", logHandler.AnalyzeLogFile)
-				logs.GET("/:id/analyses", logHandler.GetLogAnalyses)
-				logs.GET("/:id/error-analysis", logHandler.GetDetailedErrorAnalysis)
-				logs.DELETE("/:id", logHandler.DeleteLogFile)
-				logs.GET("", logHandler.GetLogFiles)
-			}
-
-			// LLM Status endpoint
-			llm := protected.Group("/llm")
-			{
-				llm.GET("/status", logHandler.GetLLMStatus)
-			}
-		}
-	}
+	// Setup routes
+	routes.SetupRoutes(r, db.DB)
 
 	// Start server
 	port := os.Getenv("PORT")
@@ -277,8 +207,8 @@ func seedUsers() error {
 
 		// Check if user already exists
 		var existingUser models.User
-		if err := database.DB.Where("email = ?", user.Email).First(&existingUser).Error; err != nil {
-			if err := database.DB.Create(&user).Error; err != nil {
+		if err := db.DB.Where("email = ?", user.Email).First(&existingUser).Error; err != nil {
+			if err := db.DB.Create(&user).Error; err != nil {
 				log.Printf("Error creating user %s: %v", user.Email, err)
 			} else {
 				log.Printf("✅ Created user: %s (%s)", user.Email, user.Role)

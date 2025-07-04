@@ -1,0 +1,68 @@
+package routes
+
+import (
+	"os"
+
+	"github.com/autolog/backend/internal/controllers"
+	"github.com/autolog/backend/internal/middleware"
+	"github.com/autolog/backend/internal/services"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+// SetupRoutes configures all application routes
+func SetupRoutes(r *gin.Engine, db *gorm.DB) {
+	// Initialize services
+	llmService := services.NewLLMService(
+		os.Getenv("OLLAMA_URL"),
+		os.Getenv("OLLAMA_MODEL"),
+	)
+
+	// Initialize controllers
+	authController := controllers.NewAuthController(db)
+	userController := controllers.NewUserController(db)
+	logController := controllers.NewLogController(db, llmService)
+
+	// API routes
+	api := r.Group("/api/v1")
+	{
+		// Auth routes
+		auth := api.Group("/auth")
+		{
+			auth.POST("/login", authController.Login)
+			auth.POST("/register", authController.Register)
+			auth.POST("/refresh", authController.RefreshToken)
+		}
+
+		// Protected routes
+		protected := api.Group("/")
+		protected.Use(middleware.AuthMiddleware())
+		{
+			// Users
+			users := protected.Group("/users")
+			{
+				users.GET("/me", userController.GetCurrentUser)
+				users.PUT("/me", userController.UpdateCurrentUser)
+				users.GET("", userController.GetUsers)
+			}
+
+			// Logs
+			logs := protected.Group("/logs")
+			{
+				logs.POST("/upload", logController.UploadLogFile)
+				logs.GET("/:id", logController.GetLogFile)
+				logs.POST("/:id/analyze", logController.AnalyzeLogFile)
+				logs.GET("/:id/analyses", logController.GetLogAnalyses)
+				logs.GET("/:id/error-analysis", logController.GetDetailedErrorAnalysis)
+				logs.DELETE("/:id", logController.DeleteLogFile)
+				logs.GET("", logController.GetLogFiles)
+			}
+
+			// LLM Status endpoint
+			llm := protected.Group("/llm")
+			{
+				llm.GET("/status", logController.GetLLMStatus)
+			}
+		}
+	}
+}

@@ -22,10 +22,8 @@ function Dashboard() {
       const [logsResponse] = await Promise.all([
         api.get('/logs?limit=5')
       ])
-      
-      const logs = logsResponse.data.data || []
+      const logs = logsResponse.data || []
       setRecentAnalyses(logs)
-      
       // Calculate stats from logs
       const stats = {
         totalLogs: logs.length * 1000, // Mock data

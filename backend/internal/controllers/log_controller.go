@@ -1,4 +1,4 @@
-package handlers
+package controllers
 
 import (
 	"fmt"
@@ -14,36 +14,26 @@ import (
 	"gorm.io/gorm"
 )
 
-// getUserIDFromContext extracts user ID from gin context
-func getUserIDFromContext(c *gin.Context) uint {
-	if userID, exists := c.Get("user_id"); exists {
-		if id, ok := userID.(uint); ok {
-			return id
-		}
-	}
-	return 0
-}
-
-type LogHandler struct {
+type LogController struct {
 	db           *gorm.DB
 	logProcessor *services.LogProcessor
 	llmService   *services.LLMService
 	uploadDir    string
 }
 
-func NewLogHandler(db *gorm.DB, uploadDir string, llmService *services.LLMService) *LogHandler {
-	return &LogHandler{
+func NewLogController(db *gorm.DB, llmService *services.LLMService) *LogController {
+	return &LogController{
 		db:           db,
 		logProcessor: services.NewLogProcessor(db, llmService),
 		llmService:   llmService,
-		uploadDir:    uploadDir,
+		uploadDir:    "uploads/logs",
 	}
 }
 
 // UploadLogFile handles log file upload
-func (h *LogHandler) UploadLogFile(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) UploadLogFile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -62,7 +52,7 @@ func (h *LogHandler) UploadLogFile(c *gin.Context) {
 	}
 
 	// Create upload directory if it doesn't exist
-	if err := os.MkdirAll(h.uploadDir, 0755); err != nil {
+	if err := os.MkdirAll(lc.uploadDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
 		return
 	}
@@ -70,7 +60,7 @@ func (h *LogHandler) UploadLogFile(c *gin.Context) {
 	// Generate unique filename
 	timestamp := time.Now().Unix()
 	filename := fmt.Sprintf("%d_%s", timestamp, file.Filename)
-	filepath := filepath.Join(h.uploadDir, filename)
+	filepath := filepath.Join(lc.uploadDir, filename)
 
 	// Save file
 	if err := c.SaveUploadedFile(file, filepath); err != nil {
@@ -82,11 +72,11 @@ func (h *LogHandler) UploadLogFile(c *gin.Context) {
 	logFile := models.LogFile{
 		Filename:   file.Filename,
 		Size:       file.Size,
-		UploadedBy: userID,
+		UploadedBy: userID.(uint),
 		Status:     "pending",
 	}
 
-	if err := h.db.Create(&logFile).Error; err != nil {
+	if err := lc.db.Create(&logFile).Error; err != nil {
 		// Clean up file if database save fails
 		os.Remove(filepath)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save log file record"})
@@ -95,7 +85,7 @@ func (h *LogHandler) UploadLogFile(c *gin.Context) {
 
 	// Process log file in background
 	go func() {
-		if err := h.logProcessor.ProcessLogFile(logFile.ID, filepath); err != nil {
+		if err := lc.logProcessor.ProcessLogFile(logFile.ID, filepath); err != nil {
 			fmt.Printf("Failed to process log file %d: %v\n", logFile.ID, err)
 		}
 	}()
@@ -107,15 +97,15 @@ func (h *LogHandler) UploadLogFile(c *gin.Context) {
 }
 
 // GetLogFiles returns all log files for the user
-func (h *LogHandler) GetLogFiles(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) GetLogFiles(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
 	var logFiles []models.LogFile
-	query := h.db.Preload("Uploader").Where("uploaded_by = ?", userID).Order("created_at DESC")
+	query := lc.db.Preload("Uploader").Where("uploaded_by = ?", userID).Order("created_at DESC")
 
 	// Add pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -131,7 +121,7 @@ func (h *LogHandler) GetLogFiles(c *gin.Context) {
 
 	// Get total count
 	var total int64
-	h.db.Model(&models.LogFile{}).Where("uploaded_by = ?", userID).Count(&total)
+	lc.db.Model(&models.LogFile{}).Where("uploaded_by = ?", userID).Count(&total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"logFiles": logFiles,
@@ -144,9 +134,9 @@ func (h *LogHandler) GetLogFiles(c *gin.Context) {
 }
 
 // GetLogFile returns a specific log file with its entries
-func (h *LogHandler) GetLogFile(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) GetLogFile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -158,7 +148,7 @@ func (h *LogHandler) GetLogFile(c *gin.Context) {
 	}
 
 	var logFile models.LogFile
-	if err := h.db.Preload("Uploader").Preload("Entries").First(&logFile, logFileID).Error; err != nil {
+	if err := lc.db.Preload("Uploader").Preload("Entries").First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
@@ -168,7 +158,7 @@ func (h *LogHandler) GetLogFile(c *gin.Context) {
 	}
 
 	// Check if user owns this log file
-	if logFile.UploadedBy != userID {
+	if logFile.UploadedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
@@ -177,9 +167,9 @@ func (h *LogHandler) GetLogFile(c *gin.Context) {
 }
 
 // AnalyzeLogFile triggers analysis of a log file
-func (h *LogHandler) AnalyzeLogFile(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -192,7 +182,7 @@ func (h *LogHandler) AnalyzeLogFile(c *gin.Context) {
 
 	// Check if user owns this log file
 	var logFile models.LogFile
-	if err := h.db.First(&logFile, logFileID).Error; err != nil {
+	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
@@ -201,13 +191,13 @@ func (h *LogHandler) AnalyzeLogFile(c *gin.Context) {
 		return
 	}
 
-	if logFile.UploadedBy != userID {
+	if logFile.UploadedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
 	// Perform analysis
-	analysis, err := h.logProcessor.AnalyzeLogFile(uint(logFileID))
+	analysis, err := lc.logProcessor.AnalyzeLogFile(uint(logFileID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Analysis failed: %v", err)})
 		return
@@ -220,9 +210,9 @@ func (h *LogHandler) AnalyzeLogFile(c *gin.Context) {
 }
 
 // GetDetailedErrorAnalysis returns detailed error analysis for a log file
-func (h *LogHandler) GetDetailedErrorAnalysis(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -235,7 +225,7 @@ func (h *LogHandler) GetDetailedErrorAnalysis(c *gin.Context) {
 
 	// Check if user owns this log file
 	var logFile models.LogFile
-	if err := h.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
+	if err := lc.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
@@ -244,7 +234,7 @@ func (h *LogHandler) GetDetailedErrorAnalysis(c *gin.Context) {
 		return
 	}
 
-	if logFile.UploadedBy != userID {
+	if logFile.UploadedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
@@ -256,7 +246,7 @@ func (h *LogHandler) GetDetailedErrorAnalysis(c *gin.Context) {
 	}
 
 	// Get detailed error analysis
-	errorAnalysis, err := h.llmService.AnalyzeLogsWithAI(logFile, logFile.Entries)
+	errorAnalysis, err := lc.llmService.AnalyzeLogsWithAI(logFile, logFile.Entries)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error analysis failed: %v", err)})
 		return
@@ -279,18 +269,18 @@ func (h *LogHandler) GetDetailedErrorAnalysis(c *gin.Context) {
 }
 
 // GetLLMStatus returns the status of the LLM service and available models
-func (h *LogHandler) GetLLMStatus(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) GetLLMStatus(c *gin.Context) {
+	_, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
 	// Check LLM health
-	healthError := h.llmService.CheckLLMHealth()
+	healthError := lc.llmService.CheckLLMHealth()
 
 	// Get available models
-	models, modelsError := h.llmService.GetAvailableModels()
+	models, modelsError := lc.llmService.GetAvailableModels()
 
 	// Get current model configuration
 	currentModel := "llama2" // Default, could be made configurable
@@ -311,9 +301,9 @@ func (h *LogHandler) GetLLMStatus(c *gin.Context) {
 }
 
 // GetLogAnalyses returns all analyses for a log file
-func (h *LogHandler) GetLogAnalyses(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) GetLogAnalyses(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -326,7 +316,7 @@ func (h *LogHandler) GetLogAnalyses(c *gin.Context) {
 
 	// Check if user owns this log file
 	var logFile models.LogFile
-	if err := h.db.First(&logFile, logFileID).Error; err != nil {
+	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
@@ -335,13 +325,13 @@ func (h *LogHandler) GetLogAnalyses(c *gin.Context) {
 		return
 	}
 
-	if logFile.UploadedBy != userID {
+	if logFile.UploadedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
 	var analyses []models.LogAnalysis
-	if err := h.db.Where("log_file_id = ?", logFileID).Order("created_at DESC").Find(&analyses).Error; err != nil {
+	if err := lc.db.Where("log_file_id = ?", logFileID).Order("created_at DESC").Find(&analyses).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch analyses"})
 		return
 	}
@@ -350,9 +340,9 @@ func (h *LogHandler) GetLogAnalyses(c *gin.Context) {
 }
 
 // DeleteLogFile deletes a log file and its associated data
-func (h *LogHandler) DeleteLogFile(c *gin.Context) {
-	userID := getUserIDFromContext(c)
-	if userID == 0 {
+func (lc *LogController) DeleteLogFile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -365,7 +355,7 @@ func (h *LogHandler) DeleteLogFile(c *gin.Context) {
 
 	// Check if user owns this log file
 	var logFile models.LogFile
-	if err := h.db.First(&logFile, logFileID).Error; err != nil {
+	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
@@ -374,13 +364,13 @@ func (h *LogHandler) DeleteLogFile(c *gin.Context) {
 		return
 	}
 
-	if logFile.UploadedBy != userID {
+	if logFile.UploadedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
 	// Delete in transaction
-	tx := h.db.Begin()
+	tx := lc.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()

@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/autolog/backend/internal/database"
+	"github.com/autolog/backend/internal/db"
 	"github.com/autolog/backend/internal/models"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
@@ -32,11 +32,11 @@ func main() {
 	}
 
 	// Connect to database
-	database.Connect()
+	db.Connect()
 
 	// Run migrations first
 	log.Println("Running database migrations...")
-	database.AutoMigrate()
+	db.AutoMigrate()
 
 	// Seed database with sample data
 	log.Println("Seeding database with sample data...")
@@ -96,8 +96,8 @@ func seedUsers() error {
 
 		// Check if user already exists
 		var existingUser models.User
-		if err := database.DB.Where("email = ?", user.Email).First(&existingUser).Error; err != nil {
-			if err := database.DB.Create(&user).Error; err != nil {
+		if err := db.DB.Where("email = ?", user.Email).First(&existingUser).Error; err != nil {
+			if err := db.DB.Create(&user).Error; err != nil {
 				log.Printf("Error creating user %s: %v", user.Email, err)
 			} else {
 				log.Printf("✅ Created user: %s (%s)", user.Email, user.Role)
