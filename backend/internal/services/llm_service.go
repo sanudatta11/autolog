@@ -142,16 +142,19 @@ func (ls *LLMService) AnalyzeLogsWithAI(logFile models.LogFile, entries []models
 	response, err := ls.callLLM(prompt)
 	if err != nil {
 		log.Printf("LLM analysis failed: %v", err)
-		// Fallback to basic error analysis
-		return ls.generateFallbackErrorAnalysis(request, errorEntries), nil
+		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
 
 	// Parse the LLM response
 	analysis, err := ls.parseDetailedLLMResponse(response)
 	if err != nil {
 		log.Printf("Failed to parse LLM response: %v", err)
-		// Fallback to basic error analysis
-		return ls.generateFallbackErrorAnalysis(request, errorEntries), nil
+		return nil, fmt.Errorf("Failed to parse LLM response: %w", err)
+	}
+
+	// Validate analysis (must have summary and root cause)
+	if analysis.Summary == "" || analysis.RootCause == "" {
+		return nil, fmt.Errorf("LLM returned incomplete analysis (missing summary or root cause)")
 	}
 
 	return analysis, nil
@@ -384,74 +387,6 @@ func (ls *LLMService) generateNoErrorsAnalysis(logFile models.LogFile) *LogAnaly
 		ErrorAnalysis:     []DetailedErrorAnalysis{},
 		CriticalErrors:    0,
 		NonCriticalErrors: 0,
-	}
-}
-
-func (ls *LLMService) generateFallbackErrorAnalysis(request LogAnalysisRequest, errorEntries []models.LogEntry) *LogAnalysisResponse {
-	// Generate a basic error analysis when LLM is not available
-	summary := fmt.Sprintf("Log file '%s' contains %d error entries that require manual analysis.",
-		request.Filename, len(errorEntries))
-
-	severity := "medium"
-	if len(errorEntries) > 10 {
-		severity = "high"
-	} else if len(errorEntries) > 5 {
-		severity = "medium"
-	}
-
-	rootCause := "Multiple system errors detected requiring investigation"
-
-	recommendations := []string{
-		"Manually review each error entry for patterns",
-		"Check system resources and dependencies",
-		"Review recent deployments or configuration changes",
-		"Monitor system metrics during error periods",
-	}
-
-	// Create basic error analysis
-	var errorAnalysis []DetailedErrorAnalysis
-	criticalCount := 0
-	nonCriticalCount := 0
-
-	// Group errors by message pattern
-	errorPatterns := make(map[string][]models.LogEntry)
-	for _, entry := range errorEntries {
-		pattern := ls.extractErrorPattern(entry.Message)
-		errorPatterns[pattern] = append(errorPatterns[pattern], entry)
-	}
-
-	for pattern, entries := range errorPatterns {
-		errorSeverity := "non-critical"
-		if len(entries) > 3 || strings.Contains(strings.ToLower(pattern), "fatal") {
-			errorSeverity = "critical"
-			criticalCount++
-		} else {
-			nonCriticalCount++
-		}
-
-		analysis := DetailedErrorAnalysis{
-			ErrorPattern:    pattern,
-			ErrorCount:      len(entries),
-			FirstOccurrence: entries[0].Timestamp.Format("2006-01-02 15:04:05"),
-			LastOccurrence:  entries[len(entries)-1].Timestamp.Format("2006-01-02 15:04:05"),
-			Severity:        errorSeverity,
-			RootCause:       "Requires manual investigation",
-			Impact:          "System functionality may be affected",
-			Fix:             "Investigate and resolve based on error pattern",
-			RelatedErrors:   []string{},
-		}
-		errorAnalysis = append(errorAnalysis, analysis)
-	}
-
-	return &LogAnalysisResponse{
-		Summary:         summary,
-		Severity:        severity,
-		RootCause:       rootCause,
-		Recommendations: recommendations,
-
-		ErrorAnalysis:     errorAnalysis,
-		CriticalErrors:    criticalCount,
-		NonCriticalErrors: nonCriticalCount,
 	}
 }
 

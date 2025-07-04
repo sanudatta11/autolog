@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/autolog/backend/internal/models"
@@ -76,27 +77,56 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 		return
 	}
 
-	// Perform RCA analysis
-	analysis, err := js.performRCAAnalysis(job.LogFile)
+	// Perform RCA analysis in chunks with error tracking
+	var failedChunk int = -1
+	partials, err := js.performRCAAnalysisWithErrorTracking(job.LogFile, &failedChunk)
 	if err != nil {
 		log.Printf("RCA analysis failed: %v", err)
+		failMsg := err.Error()
+		if failedChunk > 0 {
+			failMsg = fmt.Sprintf("Chunk %d failed: %s", failedChunk, failMsg)
+		}
+		js.updateJobStatus(jobID, models.JobStatusFailed, failMsg, map[string]interface{}{
+			"failedChunk": failedChunk,
+		})
+		return
+	}
+
+	// Store partial results in job.Result
+	result := map[string]interface{}{
+		"partials": partials,
+	}
+	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("result", result).Error; err != nil {
+		log.Printf("Failed to store partial RCA results: %v", err)
+	}
+
+	// Update progress after each chunk
+	for i := range partials {
+		progress := 20 + int(float64(i+1)/float64(len(partials))*60) // 20-80%
+		js.updateJobProgress(jobID, progress)
+	}
+
+	// (Aggregation step)
+	js.updateJobProgress(jobID, 85)
+
+	// Aggregate partials into a final RCA report using LLM
+	aggregated, err := js.aggregatePartialAnalyses(job.LogFile, partials)
+	if err != nil {
+		log.Printf("RCA aggregation failed: %v", err)
 		js.updateJobStatus(jobID, models.JobStatusFailed, err.Error(), nil)
 		return
 	}
 
-	// Update progress
-	js.updateJobProgress(jobID, 80)
-
-	// Store results
-	completedAt := time.Now()
-	result := map[string]interface{}{
-		"analysis": analysis,
+	// Store final RCA in job.Result
+	finalResult := map[string]interface{}{
+		"partials": partials,
+		"final":    aggregated,
 	}
-
+	completedAt := time.Now()
 	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 		"status":       models.JobStatusCompleted,
 		"progress":     100,
-		"result":       result,
+		"result":       finalResult,
 		"completed_at": &completedAt,
 	}).Error; err != nil {
 		log.Printf("Failed to update job completion: %v", err)
@@ -111,45 +141,65 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 	log.Printf("RCA analysis completed for job %d", jobID)
 }
 
-// performRCAAnalysis performs the actual RCA analysis
-func (js *JobService) performRCAAnalysis(logFile models.LogFile) (*LogAnalysisResponse, error) {
-	// Load log entries
+// performRCAAnalysisWithErrorTracking is like performRCAAnalysis but tracks which chunk failed
+func (js *JobService) performRCAAnalysisWithErrorTracking(logFile models.LogFile, failedChunk *int) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("failed to load log entries: %w", err)
 	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no log entries found for analysis")
+	}
+	chunkSize := 100
+	var chunks [][]models.LogEntry
+	for i := 0; i < len(entries); i += chunkSize {
+		end := i + chunkSize
+		if end > len(entries) {
+			end = len(entries)
+		}
+		chunks = append(chunks, entries[i:end])
+	}
+	var partialResults []*LogAnalysisResponse
+	for idx, chunk := range chunks {
+		log.Printf("Analyzing chunk %d/%d (entries %d-%d)...", idx+1, len(chunks), idx*chunkSize+1, idx*chunkSize+len(chunk))
+		analysis, err := js.llmService.AnalyzeLogsWithAI(logFile, chunk)
+		if err != nil {
+			*failedChunk = idx + 1
+			return nil, fmt.Errorf("LLM analysis failed for chunk %d: %w", idx+1, err)
+		}
+		partialResults = append(partialResults, analysis)
+	}
+	return partialResults, nil
+}
 
-	// Check if we have too many entries and warn
-	if len(entries) > 1000 {
-		log.Printf("Warning: Large log file detected with %d entries, analysis may take longer", len(entries))
+// aggregatePartialAnalyses aggregates chunk results into a final RCA report using the LLM
+func (js *JobService) aggregatePartialAnalyses(logFile models.LogFile, partials []*LogAnalysisResponse) (*LogAnalysisResponse, error) {
+	if len(partials) == 0 {
+		return nil, fmt.Errorf("no partial analyses to aggregate")
 	}
 
-	// Perform AI analysis with retry logic
-	var analysis *LogAnalysisResponse
-	var err error
-
-	// Try up to 3 times with exponential backoff
-	for attempt := 1; attempt <= 3; attempt++ {
-		analysis, err = js.llmService.AnalyzeLogsWithAI(logFile, entries)
-		if err == nil {
-			break
-		}
-
-		log.Printf("RCA analysis attempt %d failed: %v", attempt, err)
-
-		if attempt < 3 {
-			// Wait before retry (exponential backoff)
-			waitTime := time.Duration(attempt) * 10 * time.Second
-			log.Printf("Retrying in %v...", waitTime)
-			time.Sleep(waitTime)
-		}
+	// Prepare aggregation prompt
+	summaryParts := []string{}
+	for i, p := range partials {
+		summaryParts = append(summaryParts, fmt.Sprintf("Chunk %d: %s", i+1, p.Summary))
 	}
+	prompt := fmt.Sprintf(`You are an expert SRE. Given the following partial RCA analyses for log file '%s', produce a single, comprehensive root cause analysis report.\n\n%s\n\nOutput valid JSON in the same format as before.`, logFile.Filename, strings.Join(summaryParts, "\n"))
 
+	response, err := js.llmService.callLLM(prompt)
 	if err != nil {
-		return nil, fmt.Errorf("AI analysis failed after 3 attempts: %w", err)
+		return nil, fmt.Errorf("LLM aggregation failed: %w", err)
 	}
 
-	return analysis, nil
+	aggregated, err := js.llmService.parseDetailedLLMResponse(response)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to parse LLM aggregation response: %w", err)
+	}
+
+	if aggregated.Summary == "" || aggregated.RootCause == "" {
+		return nil, fmt.Errorf("LLM aggregation returned incomplete analysis")
+	}
+
+	return aggregated, nil
 }
 
 // updateJobProgress updates the job progress

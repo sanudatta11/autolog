@@ -32,8 +32,6 @@ func CORSMiddleware() gin.HandlerFunc {
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusOK)
 			return
-		} else {
-			log.Println("Method is not OPTIONS", c.Request.Method, "from", origin)
 		}
 
 		c.Next()

@@ -108,7 +108,8 @@ const RCAnalysis = ({ logFileId, onAnalysisComplete }) => {
         </div>
       )}
 
-      {status === 'idle' && (
+      {/* Only show the button if not in progress */}
+      {(status === 'idle' || status === 'not_started' || status === 'completed') && (
         <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
           <p className="text-gray-600 text-sm mb-3">
             Start a Root Cause Analysis to get detailed insights into your log file.
