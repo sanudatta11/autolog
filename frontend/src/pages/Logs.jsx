@@ -13,6 +13,9 @@ const Logs = () => {
   const [logEntries, setLogEntries] = useState([]);
   const [analyses, setAnalyses] = useState([]);
   const [showAllEntries, setShowAllEntries] = useState(false);
+  const [llmModalOpen, setLlmModalOpen] = useState(false);
+  const [llmModalAnalysis, setLlmModalAnalysis] = useState(null);
+  const [llmModalLogFile, setLlmModalLogFile] = useState(null);
 
   useEffect(() => {
     fetchLogFiles();
@@ -143,6 +146,27 @@ const Logs = () => {
   // Helper to filter error/fatal entries
   const getErrorEntries = (entries) => entries.filter(e => e.level === 'ERROR' || e.level === 'FATAL');
 
+  // Fetch and show LLM analysis modal
+  const handleShowLLMAnalysis = async (logFile) => {
+    try {
+      const response = await api.get(`/logs/${logFile.id}/analyses`);
+      const analyses = response.data.analyses || [];
+      if (analyses.length > 0) {
+        setLlmModalAnalysis(analyses[0]); // Show the latest analysis
+        setLlmModalLogFile(logFile);
+        setLlmModalOpen(true);
+      } else {
+        setLlmModalAnalysis(null);
+        setLlmModalLogFile(logFile);
+        setLlmModalOpen(true);
+      }
+    } catch (error) {
+      setLlmModalAnalysis({ error: 'Failed to fetch LLM analysis: ' + error.message });
+      setLlmModalLogFile(logFile);
+      setLlmModalOpen(true);
+    }
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-8">Log Analysis</h1>
@@ -220,6 +244,12 @@ const Logs = () => {
                         Analyze
                       </button>
                     )}
+                    <button
+                      onClick={() => handleShowLLMAnalysis(logFile)}
+                      className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+                    >
+                      LLM Analysis
+                    </button>
                     <button
                       onClick={() => handleDelete(logFile.id)}
                       className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
@@ -351,6 +381,82 @@ const Logs = () => {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* LLM Analysis Modal */}
+      {llmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl relative">
+            <button
+              onClick={() => setLlmModalOpen(false)}
+              className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-2xl"
+              aria-label="Close"
+            >
+              &times;
+            </button>
+            <h2 className="text-xl font-semibold mb-4">
+              LLM Analysis for: {llmModalLogFile?.filename}
+            </h2>
+            {llmModalAnalysis?.error ? (
+              <div className="text-red-600">{llmModalAnalysis.error}</div>
+            ) : llmModalAnalysis ? (
+              <div>
+                <div className="mb-2">
+                  <span className="font-medium">Severity:</span> {llmModalAnalysis.severity}
+                </div>
+                <div className="mb-2">
+                  <span className="font-medium">Summary:</span> {llmModalAnalysis.summary}
+                </div>
+                {llmModalAnalysis.metadata?.errorAnalysis && llmModalAnalysis.metadata.errorAnalysis.length > 0 && (
+                  <div className="mb-3">
+                    <h4 className="font-medium text-sm text-gray-800 mb-1">Error Patterns & RCA:</h4>
+                    <div className="space-y-2">
+                      {llmModalAnalysis.metadata.errorAnalysis.map((err, idx) => (
+                        <div key={idx} className="border border-gray-100 rounded p-2 bg-gray-50">
+                          <div className="flex flex-wrap gap-2 items-center mb-1">
+                            <span className="font-semibold text-red-700">{err.errorPattern}</span>
+                            <span className="text-xs text-gray-600">Count: {err.errorCount}</span>
+                            <span className="text-xs text-gray-600">Severity: {err.severity}</span>
+                            <span className="text-xs text-gray-600">First: {err.firstOccurrence}</span>
+                            <span className="text-xs text-gray-600">Last: {err.lastOccurrence}</span>
+                          </div>
+                          <div className="text-xs text-gray-700 mb-1"><b>Root Cause:</b> {err.rootCause}</div>
+                          <div className="text-xs text-gray-700 mb-1"><b>Impact:</b> {err.impact}</div>
+                          <div className="text-xs text-gray-700 mb-1"><b>Fix:</b> {err.fix}</div>
+                          {err.relatedErrors && err.relatedErrors.length > 0 && (
+                            <div className="text-xs text-gray-500"><b>Related Errors:</b> {err.relatedErrors.join(', ')}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {llmModalAnalysis.metadata?.rootCause && (
+                  <div className="mb-2">
+                    <span className="font-medium">Root Cause:</span> {llmModalAnalysis.metadata.rootCause}
+                  </div>
+                )}
+                {llmModalAnalysis.metadata?.recommendations && llmModalAnalysis.metadata.recommendations.length > 0 && (
+                  <div className="mb-2">
+                    <span className="font-medium">Recommendations:</span>
+                    <ul className="list-disc list-inside text-sm text-gray-700">
+                      {llmModalAnalysis.metadata.recommendations.map((rec, idx) => (
+                        <li key={idx}>{rec}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {llmModalAnalysis.metadata?.incidentType && (
+                  <div className="mb-2">
+                    <span className="font-medium">Incident Type:</span> {llmModalAnalysis.metadata.incidentType}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>No analysis found for this log file.</div>
+            )}
           </div>
         </div>
       )}

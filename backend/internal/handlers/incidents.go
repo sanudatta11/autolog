@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/autolog/backend/internal/database"
+	"github.com/autolog/backend/internal/models"
 	"github.com/gin-gonic/gin"
-	"github.com/incident-sage/backend/internal/database"
-	"github.com/incident-sage/backend/internal/models"
 )
 
 type CreateIncidentRequest struct {

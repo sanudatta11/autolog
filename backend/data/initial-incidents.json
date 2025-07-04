@@ -6,7 +6,7 @@
       "status": "open",
       "priority": "high",
       "severity": "major",
-      "reporterEmail": "admin@incidentsage.com",
+      "reporterEmail": "admin@autolog.com",
       "assigneeEmail": null,
       "tags": ["server", "production", "latency"]
     },
@@ -16,8 +16,8 @@
       "status": "in_progress",
       "priority": "critical",
       "severity": "critical",
-      "reporterEmail": "manager@incidentsage.com",
-      "assigneeEmail": "responder@incidentsage.com",
+      "reporterEmail": "manager@autolog.com",
+      "assigneeEmail": "responder@autolog.com",
       "tags": ["database", "connection", "pool"]
     },
     {
@@ -26,8 +26,8 @@
       "status": "resolved",
       "priority": "medium",
       "severity": "moderate",
-      "reporterEmail": "admin@incidentsage.com",
-      "assigneeEmail": "manager@incidentsage.com",
+      "reporterEmail": "admin@autolog.com",
+      "assigneeEmail": "manager@autolog.com",
       "tags": ["security", "authentication", "brute-force"]
     },
     {
@@ -36,7 +36,7 @@
       "status": "open",
       "priority": "medium",
       "severity": "minor",
-      "reporterEmail": "manager@incidentsage.com",
+      "reporterEmail": "manager@autolog.com",
       "assigneeEmail": null,
       "tags": ["api", "rate-limiting", "integration"]
     },
@@ -46,8 +46,8 @@
       "status": "open",
       "priority": "high",
       "severity": "major",
-      "reporterEmail": "admin@incidentsage.com",
-      "assigneeEmail": "responder@incidentsage.com",
+      "reporterEmail": "admin@autolog.com",
+      "assigneeEmail": "responder@autolog.com",
       "tags": ["ssl", "certificate", "security"]
     }
   ]

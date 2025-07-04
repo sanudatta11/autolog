@@ -88,7 +88,7 @@ To customize the initial data:
 
 After seeding, you can log in with any of the users defined in `initial-users.json`. The default users are:
 
-- **Admin**: `admin@incidentsage.com` / `admin123`
-- **Manager**: `manager@incidentsage.com` / `manager123`
-- **Responder**: `responder@incidentsage.com` / `responder123`
-- **Viewer**: `viewer@incidentsage.com` / `viewer123` 
+- **Admin**: `admin@autolog.com` / `admin123`
+- **Manager**: `manager@autolog.com` / `manager123`
+- **Responder**: `responder@autolog.com` / `responder123`
+- **Viewer**: `viewer@autolog.com` / `viewer123` 

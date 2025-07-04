@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/incident-sage/backend/internal/database"
+	"github.com/autolog/backend/internal/database"
 	"github.com/joho/godotenv"
 )
 

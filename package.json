@@ -1,5 +1,5 @@
 {
-  "name": "incident-sage",
+  "name": "autolog",
   "version": "1.0.0",
   "description": "Modern incident management and response platform",
   "private": true,
@@ -30,6 +30,6 @@
     "react",
     "golang"
   ],
-  "author": "IncidentSage Team",
+  "author": "AutoLog Team",
   "license": "MIT"
 } 

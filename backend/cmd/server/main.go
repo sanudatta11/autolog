@@ -8,12 +8,13 @@ import (
 	"os"
 	"time"
 
+	"autolog/backend/internal/database"
+	"autolog/backend/internal/handlers"
+	"autolog/backend/internal/middleware"
+	"autolog/backend/internal/models"
+	"autolog/backend/internal/services"
+
 	"github.com/gin-gonic/gin"
-	"github.com/incident-sage/backend/internal/database"
-	"github.com/incident-sage/backend/internal/handlers"
-	"github.com/incident-sage/backend/internal/middleware"
-	"github.com/incident-sage/backend/internal/models"
-	"github.com/incident-sage/backend/internal/services"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 )

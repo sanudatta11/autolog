@@ -5,10 +5,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/autolog/backend/internal/database"
+	"github.com/autolog/backend/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/incident-sage/backend/internal/database"
-	"github.com/incident-sage/backend/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
 

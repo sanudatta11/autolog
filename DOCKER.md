@@ -1,6 +1,6 @@
-# Docker Setup for IncidentSage
+# Docker Setup for AutoLog
 
-This guide covers how to run IncidentSage using Docker for both development and production environments.
+This guide covers how to run AutoLog using Docker for both development and production environments.
 
 ## 🚀 Quick Start (Development)
 
@@ -11,7 +11,7 @@ This guide covers how to run IncidentSage using Docker for both development and 
 ### 1. Clone and Setup
 ```bash
 git clone <repository-url>
-cd incident-sage
+cd autolog
 ```
 
 ### 2. Start Development Environment

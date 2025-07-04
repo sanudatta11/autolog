@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/incident-sage/backend/internal/database"
-	"github.com/incident-sage/backend/internal/models"
+	"github.com/autolog/backend/internal/database"
+	"github.com/autolog/backend/internal/models"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 )

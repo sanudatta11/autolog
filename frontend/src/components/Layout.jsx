@@ -22,7 +22,7 @@ function Layout() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
               <h1 className="text-xl font-semibold text-gray-900">
-                IncidentSage
+                AutoLog
               </h1>
             </div>
             

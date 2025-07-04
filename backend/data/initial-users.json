@@ -1,28 +1,28 @@
 {
   "users": [
     {
-      "email": "admin@incidentsage.com",
+      "email": "admin@autolog.com",
       "password": "admin123",
       "firstName": "Admin",
       "lastName": "User",
       "role": "admin"
     },
     {
-      "email": "manager@incidentsage.com",
+      "email": "manager@autolog.com",
       "password": "manager123",
       "firstName": "John",
       "lastName": "Manager",
       "role": "manager"
     },
     {
-      "email": "responder@incidentsage.com",
+      "email": "responder@autolog.com",
       "password": "responder123",
       "firstName": "Sarah",
       "lastName": "Responder",
       "role": "responder"
     },
     {
-      "email": "viewer@incidentsage.com",
+      "email": "viewer@autolog.com",
       "password": "viewer123",
       "firstName": "Lisa",
       "lastName": "Viewer",

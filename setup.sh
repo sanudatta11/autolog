@@ -3,7 +3,7 @@
 # Fix PATH for WSL to find Go installation
 export PATH="$PATH:/mnt/c/Program Files/Go/bin"
 
-echo "🚀 Setting up IncidentSage Project"
+echo "🚀 Setting up AutoLog Project"
 echo "=================================="
 
 echo "DEBUG: PATH is: $PATH"

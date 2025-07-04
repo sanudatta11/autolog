@@ -1,4 +1,4 @@
-# IncidentSage
+# AutoLog
 
 A modern incident management and response platform designed to streamline incident handling, improve team collaboration, and provide comprehensive incident lifecycle management.
 
@@ -23,7 +23,7 @@ A modern incident management and response platform designed to streamline incide
 ## 📁 Project Structure
 
 ```
-incident-sage/
+autolog/
 ├── frontend/          # React frontend application
 ├── backend/           # Go backend API
 │   ├── cmd/          # Application entry points
@@ -49,7 +49,7 @@ incident-sage/
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd incident-sage
+   cd autolog
    ```
 
 2. **Install frontend dependencies**
@@ -84,10 +84,10 @@ incident-sage/
 
 The application comes with pre-configured users for testing:
 
-- **Admin**: `admin@incidentsage.com` / `admin123`
-- **Manager**: `manager@incidentsage.com` / `manager123`
-- **Responder**: `responder@incidentsage.com` / `responder123`
-- **Viewer**: `viewer@incidentsage.com` / `viewer123`
+- **Admin**: `admin@autolog.com` / `admin123`
+- **Manager**: `manager@autolog.com` / `manager123`
+- **Responder**: `responder@autolog.com` / `responder123`
+- **Viewer**: `viewer@autolog.com` / `viewer123`
 
 ## 🏥 Health Checks & Startup Order
 
@@ -155,7 +155,7 @@ See `backend/data/README.md` for detailed configuration options.
 
 #### Backend (.env)
 ```
-DATABASE_URL="postgresql://username:password@localhost:5432/incident_sage"
+DATABASE_URL="postgresql://username:password@localhost:5432/autolog"
 JWT_SECRET="your-jwt-secret"
 PORT=8080
 ENV=development

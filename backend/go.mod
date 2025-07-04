@@ -1,4 +1,4 @@
-module github.com/incident-sage/backend
+module github.com/autolog/backend
 
 go 1.23.0
 

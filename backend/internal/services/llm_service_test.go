@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/incident-sage/backend/internal/models"
+	"github.com/autolog/backend/internal/models"
 )
 
 func TestFilterErrorEntries(t *testing.T) {

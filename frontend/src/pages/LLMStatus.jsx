@@ -109,7 +109,7 @@ const LLMStatus = () => {
           <div>
             <div className="font-medium">Model Status</div>
             <div className="text-sm text-gray-600">
-              {llmStatus.availableModels?.includes(llmStatus.currentModel) 
+              {llmStatus.availableModels?.some(model => model.startsWith(llmStatus.currentModel))
                 ? '✅ Available' 
                 : '❌ Not Available'}
             </div>
@@ -154,10 +154,10 @@ const LLMStatus = () => {
         </p>
         <div className="bg-gray-800 text-green-400 p-4 rounded font-mono text-sm">
           <div># Install popular models for better analysis:</div>
-          <div>docker exec incident-sage-ollama ollama pull llama2:13b</div>
-          <div>docker exec incident-sage-ollama ollama pull mistral:7b</div>
-          <div>docker exec incident-sage-ollama ollama pull codellama:7b</div>
-          <div>docker exec incident-sage-ollama ollama pull neural-chat:7b</div>
+                          <div>docker exec autolog-ollama ollama pull llama2:13b</div>
+                <div>docker exec autolog-ollama ollama pull mistral:7b</div>
+                <div>docker exec autolog-ollama ollama pull codellama:7b</div>
+                <div>docker exec autolog-ollama ollama pull neural-chat:7b</div>
         </div>
         <p className="text-xs text-gray-600 mt-2">
           Note: Larger models provide better analysis but require more memory and processing time.

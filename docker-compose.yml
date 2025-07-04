@@ -4,9 +4,9 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
-    container_name: incident-sage-db
+    container_name: autolog-db
     environment:
-      POSTGRES_DB: incidentsage
+      POSTGRES_DB: autolog
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
@@ -20,24 +20,24 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - incident-sage-network
+      - autolog-network
 
   # Go Backend with Live Reload
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: incident-sage-backend
+    container_name: autolog-backend
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/incidentsage?sslmode=disable
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/autolog?sslmode=disable
       JWT_SECRET: your-secret-key-change-in-production
       CORS_ORIGIN: http://localhost:5173
       ENV: development
       PORT: 8080
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama2
+      OLLAMA_MODEL: llama2:latest
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,12 +51,12 @@ services:
       start_period: 40s
     restart: unless-stopped
     networks:
-      - incident-sage-network
+      - autolog-network
 
   # Local LLM Service (Ollama)
   ollama:
     image: ollama/ollama:latest
-    container_name: incident-sage-ollama
+    container_name: autolog-ollama
     ports:
       - "11434:11434"
     volumes:
@@ -72,14 +72,14 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - incident-sage-network
+      - autolog-network
 
   # React Frontend with Live Reload
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: incident-sage-frontend
+    container_name: autolog-frontend
     ports:
       - "5173:5173"
     environment:
@@ -96,12 +96,12 @@ services:
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
     restart: unless-stopped
     networks:
-      - incident-sage-network
+      - autolog-network
 
   # Adminer (DB management)
   adminer:
     image: adminer:latest
-    container_name: incident-sage-adminer
+    container_name: autolog-adminer
     ports:
       - "8081:8080"
     environment:
@@ -110,12 +110,12 @@ services:
       - postgres
     restart: unless-stopped
     networks:
-      - incident-sage-network
+      - autolog-network
 
 volumes:
   postgres_data:
   ollama_data:
 
 networks:
-  incident-sage-network:
+  autolog-network:
     driver: bridge 

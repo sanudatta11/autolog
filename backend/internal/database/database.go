@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/incident-sage/backend/internal/models"
+	"github.com/autolog/backend/internal/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

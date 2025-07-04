@@ -1,5 +1,5 @@
 {
-  "name": "@incident-sage/frontend",
+  "name": "@autolog/frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",

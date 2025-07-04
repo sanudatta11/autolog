@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/autolog/backend/internal/models"
+	"github.com/autolog/backend/internal/services"
 	"github.com/gin-gonic/gin"
-	"github.com/incident-sage/backend/internal/models"
-	"github.com/incident-sage/backend/internal/services"
 	"gorm.io/gorm"
 )
 

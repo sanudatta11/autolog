@@ -1,7 +1,7 @@
-# IncidentSage Ollama Setup Script for Windows PowerShell
+# AutoLog Ollama Setup Script for Windows PowerShell
 # This script helps set up Ollama for local LLM functionality
 
-Write-Host "Setting up Ollama for IncidentSage..."
+Write-Host "Setting up Ollama for AutoLog..."
 Write-Host "========================================"
 
 # Check if Ollama is already installed
@@ -101,7 +101,7 @@ Write-Host ""
 Write-Host "Ollama setup completed successfully!"
 Write-Host ""
 Write-Host "Next steps:"
-Write-Host "1. Start IncidentSage: make dev"
+Write-Host "1. Start AutoLog: make dev"
 Write-Host "2. Upload a log file in the web interface"
 Write-Host "3. Click 'Analyze' to get AI-powered incident analysis"
 Write-Host ""

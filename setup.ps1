@@ -1,7 +1,7 @@
-# IncidentSage Setup Script for Windows PowerShell
-# This script sets up the IncidentSage project with all dependencies
+# AutoLog Setup Script for Windows PowerShell
+# This script sets up the AutoLog project with all dependencies
 
-Write-Host "🚀 Setting up IncidentSage Project" -ForegroundColor Green
+Write-Host "🚀 Setting up AutoLog Project" -ForegroundColor Green
 Write-Host "==================================" -ForegroundColor Green
 
 # Check if Go is installed

@@ -1,10 +1,10 @@
-# IncidentSage Makefile
+# AutoLog Makefile
 # Essential commands for development and deployment
 
 .PHONY: dev docker-dev docker-clean logs shell health status clean setup setup-full setup-ollama ollama-status ollama-pull test-ai rebuild-backend rebuild-frontend rebuild-all restart-all dev-local stop-services run-backend run-frontend build-and-up
 
 
-	@echo "🚀 IncidentSage - Essential Commands"
+	@echo "🚀 AutoLog - Essential Commands"
 	@echo "===================================="
 	@echo ""
 	@echo "📋 Development Commands:"
@@ -132,7 +132,7 @@ clean: ## Clean build artifacts
 	@rm -rf frontend/node_modules
 
 setup: ## Initial project setup
-	@echo "🚀 Setting up IncidentSage project..."
+	@echo "🚀 Setting up AutoLog project..."
 ifeq ($(OS),Windows_NT)
 	@powershell -ExecutionPolicy Bypass -File setup.ps1
 else
@@ -141,7 +141,7 @@ else
 endif
 
 setup-full: ## Complete setup including Ollama LLM
-	@echo "🚀 Setting up IncidentSage with AI capabilities..."
+	@echo "🚀 Setting up AutoLog with AI capabilities..."
 ifeq ($(OS),Windows_NT)
 	@powershell -ExecutionPolicy Bypass -File setup.ps1
 	@echo ""

@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# IncidentSage Ollama Setup Script
+# AutoLog Ollama Setup Script
 # This script helps set up Ollama for local LLM functionality
 
-echo "🚀 Setting up Ollama for IncidentSage..."
+echo "🚀 Setting up Ollama for AutoLog..."
 echo "========================================"
 
 # Check if Ollama is already installed
@@ -69,7 +69,7 @@ echo ""
 echo "🎉 Ollama setup completed successfully!"
 echo ""
 echo "📋 Next steps:"
-echo "1. Start IncidentSage: make dev"
+echo "1. Start AutoLog: make dev"
 echo "2. Upload a log file in the web interface"
 echo "3. Click 'Analyze' to get AI-powered incident analysis"
 echo ""
