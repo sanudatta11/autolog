@@ -1,3 +1,5 @@
+// IMPORTANT: To avoid duplicated /api/v1 in your API URLs, set VITE_API_URL to 'http://localhost:8080' (without /api/v1) in your .env file.
+// The endpoints below already include /api/v1 in their paths.
 import axios from 'axios'
 
 const api = axios.create({
@@ -37,25 +39,25 @@ api.interceptors.response.use(
 // Parsing Rules API
 export const parsingRulesAPI = {
   // Get all parsing rules for the current user
-  getUserParsingRules: () => api.get('/api/v1/parsing-rules'),
+  getUserParsingRules: () => api.get('/parsing-rules'),
   
   // Get a specific parsing rule
-  getParsingRule: (id) => api.get(`/api/v1/parsing-rules/${id}`),
+  getParsingRule: (id) => api.get(`/parsing-rules/${id}`),
   
   // Create a new parsing rule
-  createParsingRule: (rule) => api.post('/api/v1/parsing-rules', rule),
+  createParsingRule: (rule) => api.post('/parsing-rules', rule),
   
   // Update an existing parsing rule
-  updateParsingRule: (id, rule) => api.put(`/api/v1/parsing-rules/${id}`, rule),
+  updateParsingRule: (id, rule) => api.put(`/parsing-rules/${id}`, rule),
   
   // Delete a parsing rule
-  deleteParsingRule: (id) => api.delete(`/api/v1/parsing-rules/${id}`),
+  deleteParsingRule: (id) => api.delete(`/parsing-rules/${id}`),
   
   // Test a parsing rule against sample logs
-  testParsingRule: (rule, sampleLogs) => api.post('/api/v1/parsing-rules/test', { rule, sampleLogs }),
+  testParsingRule: (rule, sampleLogs) => api.post('/parsing-rules/test', { rule, sampleLogs }),
   
   // Get active parsing rules
-  getActiveParsingRules: () => api.get('/api/v1/parsing-rules/active'),
+  getActiveParsingRules: () => api.get('/parsing-rules/active'),
 }
 
 export default api 

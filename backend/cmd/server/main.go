@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -139,10 +140,16 @@ func main() {
 	// Setup routes
 	routes.SetupRoutes(r, db.DB, stopChan)
 
-	// Start server
+	// Start server with graceful shutdown
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
+	}
+
+	// Create HTTP server
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
 	}
 
 	logger.Info("Starting AutoLog backend server", map[string]interface{}{
@@ -150,10 +157,29 @@ func main() {
 		"gin_mode": gin.Mode(),
 	})
 
-	if err := r.Run(":" + port); err != nil {
-		logger.Fatal("Failed to start server", map[string]interface{}{
+	// Start server in a goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("Failed to start server", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-stopChan
+	logger.Info("Shutting down server gracefully...", nil)
+
+	// Create a context with timeout for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("Server forced to shutdown", map[string]interface{}{
 			"error": err.Error(),
 		})
+	} else {
+		logger.Info("Server exited gracefully", nil)
 	}
 }
 

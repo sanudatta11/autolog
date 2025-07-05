@@ -14,7 +14,7 @@ const LLMAPICalls = () => {
 
   const fetchAPICalls = async () => {
     try {
-      const response = await axios.get('/api/v1/admin/llm-api-calls', {
+      const response = await axios.get('/admin/llm-api-calls', {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -31,7 +31,7 @@ const LLMAPICalls = () => {
     if (logFileDetails[logFileId]) return logFileDetails[logFileId];
     
     try {
-      const response = await axios.get(`/api/v1/admin/log-files/${logFileId}`, {
+      const response = await axios.get(`/admin/log-files/${logFileId}`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -49,7 +49,7 @@ const LLMAPICalls = () => {
     if (jobDetails[jobId]) return jobDetails[jobId];
     
     try {
-      const response = await axios.get(`/api/v1/admin/jobs/${jobId}`, {
+      const response = await axios.get(`/admin/jobs/${jobId}`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -65,7 +65,7 @@ const LLMAPICalls = () => {
 
   const clearAPICalls = async () => {
     try {
-      await axios.delete('/api/v1/admin/llm-api-calls', {
+      await axios.delete('/admin/llm-api-calls', {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },

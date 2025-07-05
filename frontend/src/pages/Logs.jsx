@@ -748,6 +748,66 @@ const Logs = () => {
                     if ('final' in analysis) analysis = analysis.final;
                     else if ('analysis' in analysis) analysis = analysis.analysis;
                   }
+                  
+                  // Check if this is a "no errors found" analysis
+                  const isNoErrorsAnalysis = analysis.severity === 'low' && 
+                    analysis.criticalErrors === 0 && 
+                    analysis.nonCriticalErrors === 0 && 
+                    (!analysis.errorAnalysis || analysis.errorAnalysis.length === 0) &&
+                    (analysis.summary?.toLowerCase().includes('no error') || 
+                     analysis.rootCause?.toLowerCase().includes('no error'));
+
+                  if (isNoErrorsAnalysis) {
+                    return (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="flex items-center mb-3">
+                          <div className="flex-shrink-0">
+                            <svg className="h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <div className="ml-3">
+                            <h3 className="text-lg font-medium text-green-800">No Errors Detected</h3>
+                            <p className="text-sm text-green-700">Your log file contains no ERROR or FATAL entries</p>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-white rounded-md p-3 border border-green-200">
+                          <div className="mb-3">
+                            <h4 className="text-sm font-medium text-gray-700 mb-1">Summary</h4>
+                            <p className="text-sm text-gray-600">{analysis.summary}</p>
+                          </div>
+                          
+                          <div className="mb-3">
+                            <h4 className="text-sm font-medium text-gray-700 mb-1">Status</h4>
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              ✅ System Healthy - No RCA Needed
+                            </span>
+                          </div>
+                          
+                          {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
+                            <div>
+                              <h4 className="text-sm font-medium text-gray-700 mb-1">Recommendations</h4>
+                              <ul className="text-sm text-gray-600 list-disc list-inside">
+                                {analysis.recommendations.map((rec, index) => (
+                                  <li key={index}>{rec}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                          <p className="text-sm text-blue-800">
+                            <strong>Note:</strong> Since no errors were detected, no Root Cause Analysis is needed. 
+                            Your system appears to be functioning normally. Continue monitoring for any new issues.
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Standard error analysis display
                   return (
                     <>
                       {/* Summary & Severity */}

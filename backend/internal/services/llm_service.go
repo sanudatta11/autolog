@@ -775,28 +775,120 @@ func (ls *LLMService) callLLMWithTimeout(prompt string, timeout int) (string, er
 	return ollamaResp.Response, nil
 }
 
-func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisResponse, error) {
-	// Clean the response - remove any markdown formatting
-	cleanResponse := strings.TrimSpace(response)
+// extractAndCleanJSON attempts to extract valid JSON from a potentially malformed response
+func (ls *LLMService) extractAndCleanJSON(response string) string {
+	response = strings.TrimSpace(response)
 
 	// Remove markdown code blocks if present
-	if strings.HasPrefix(cleanResponse, "```json") {
-		cleanResponse = strings.TrimPrefix(cleanResponse, "```json")
-	}
-	if strings.HasPrefix(cleanResponse, "```") {
-		cleanResponse = strings.TrimPrefix(cleanResponse, "```")
-	}
-	if strings.HasSuffix(cleanResponse, "```") {
-		cleanResponse = strings.TrimSuffix(cleanResponse, "```")
+	if strings.Contains(response, "```json") {
+		start := strings.Index(response, "```json")
+		end := strings.LastIndex(response, "```")
+		if start != -1 && end != -1 && end > start {
+			response = response[start+7 : end]
+		}
+	} else if strings.Contains(response, "```") {
+		start := strings.Index(response, "```")
+		end := strings.LastIndex(response, "```")
+		if start != -1 && end != -1 && end > start {
+			response = response[start+3 : end]
+		}
 	}
 
-	cleanResponse = strings.TrimSpace(cleanResponse)
-
-	// Defensive: Check if the response looks like JSON
-	if !strings.HasPrefix(cleanResponse, "{") && !strings.HasPrefix(cleanResponse, "[") {
-		logger.WithError(fmt.Errorf("LLM returned non-JSON response: %q", cleanResponse), "llm_service").Error("LLM did not return valid JSON")
-		return nil, fmt.Errorf("LLM did not return valid JSON. Raw response: %q", cleanResponse)
+	// Try to find the first { and last } to extract JSON
+	start := strings.Index(response, "{")
+	end := strings.LastIndex(response, "}")
+	if start != -1 && end != -1 && end > start {
+		response = response[start : end+1]
 	}
+
+	// Clean up common issues
+	response = strings.TrimSpace(response)
+
+	// Fix double-escaped quotes and other escape sequences
+	response = strings.ReplaceAll(response, `\"`, `"`)
+	response = strings.ReplaceAll(response, `\\n`, `\n`)
+	response = strings.ReplaceAll(response, `\\t`, `\t`)
+	response = strings.ReplaceAll(response, `\\`, `\`)
+
+	return response
+}
+
+// createFallbackAnalysis creates a basic analysis when JSON parsing completely fails
+func (ls *LLMService) createFallbackAnalysis(response string) *LogAnalysisResponse {
+	// Try to extract basic information from the response text
+	response = strings.ToLower(response)
+
+	// Look for common patterns in the response
+	var summary, rootCause string
+	var severity string = "medium"
+	var recommendations []string
+
+	// Extract summary if present
+	if strings.Contains(response, "summary") {
+		// Try to find content after "summary"
+		parts := strings.Split(response, "summary")
+		if len(parts) > 1 {
+			summary = strings.TrimSpace(parts[1])
+			// Clean up the summary
+			if strings.Contains(summary, "rootcause") || strings.Contains(summary, "recommendations") {
+				summary = strings.Split(summary, "rootcause")[0]
+				summary = strings.Split(summary, "recommendations")[0]
+			}
+			summary = strings.TrimSpace(summary)
+			// Remove quotes and extra punctuation
+			summary = strings.Trim(summary, `"':,.`)
+		}
+	}
+
+	// Extract root cause if present
+	if strings.Contains(response, "rootcause") {
+		parts := strings.Split(response, "rootcause")
+		if len(parts) > 1 {
+			rootCause = strings.TrimSpace(parts[1])
+			if strings.Contains(rootCause, "recommendations") {
+				rootCause = strings.Split(rootCause, "recommendations")[0]
+			}
+			rootCause = strings.TrimSpace(rootCause)
+			rootCause = strings.Trim(rootCause, `"':,.`)
+		}
+	}
+
+	// Determine severity based on keywords
+	if strings.Contains(response, "critical") || strings.Contains(response, "fatal") {
+		severity = "critical"
+	} else if strings.Contains(response, "high") || strings.Contains(response, "major") {
+		severity = "high"
+	} else if strings.Contains(response, "low") || strings.Contains(response, "minor") {
+		severity = "low"
+	}
+
+	// Add basic recommendations
+	recommendations = append(recommendations, "Review the log entries for more details")
+	recommendations = append(recommendations, "Check system configuration and dependencies")
+
+	// If we couldn't extract meaningful information, provide defaults
+	if summary == "" {
+		summary = "Analysis completed but response format was invalid"
+	}
+	if rootCause == "" {
+		rootCause = "Unable to determine root cause due to response parsing issues"
+	}
+
+	return &LogAnalysisResponse{
+		Summary:           summary,
+		Severity:          severity,
+		RootCause:         rootCause,
+		Recommendations:   recommendations,
+		ErrorAnalysis:     []DetailedErrorAnalysis{},
+		CriticalErrors:    0,
+		NonCriticalErrors: 0,
+	}
+}
+
+// parseDetailedLLMResponse parses the LLM response into a LogAnalysisResponse
+func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisResponse, error) {
+	// Clean the response - remove any markdown formatting
+	cleanResponse := ls.extractAndCleanJSON(response)
 
 	// Try to parse the JSON as-is first
 	var analysis LogAnalysisResponse
@@ -809,10 +901,26 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 			logger.Debug("Attempting to parse fixed JSON", nil)
 			if err := json.Unmarshal([]byte(fixedResponse), &analysis); err != nil {
 				logger.WithError(err, "llm_service").Error("Failed to parse fixed JSON from LLM")
+
+				// Final fallback: try to extract basic information from the response
+				fallbackAnalysis := ls.createFallbackAnalysis(response)
+				if fallbackAnalysis != nil {
+					logger.Info("Created fallback analysis due to JSON parsing failure", nil)
+					return fallbackAnalysis, nil
+				}
+
 				return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
 			}
 		} else {
 			logger.WithError(err, "llm_service").Error("Failed to parse JSON from LLM")
+
+			// Final fallback: try to extract basic information from the response
+			fallbackAnalysis := ls.createFallbackAnalysis(response)
+			if fallbackAnalysis != nil {
+				logger.Info("Created fallback analysis due to JSON parsing failure", nil)
+				return fallbackAnalysis, nil
+			}
+
 			return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
 		}
 	}
@@ -849,6 +957,18 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 
 // attemptToFixJSON tries to fix common JSON syntax errors
 func (ls *LLMService) attemptToFixJSON(jsonStr string) string {
+	// Fix double-escaped quotes: \" -> "
+	jsonStr = strings.ReplaceAll(jsonStr, `\"`, `"`)
+
+	// Fix double-escaped newlines: \\n -> \n
+	jsonStr = strings.ReplaceAll(jsonStr, `\\n`, `\n`)
+
+	// Fix double-escaped tabs: \\t -> \t
+	jsonStr = strings.ReplaceAll(jsonStr, `\\t`, `\t`)
+
+	// Fix double-escaped backslashes: \\ -> \
+	jsonStr = strings.ReplaceAll(jsonStr, `\\`, `\`)
+
 	// Remove stray \n before property names (not inside strings)
 	re := regexp.MustCompile(`,?\\n\s*"([a-zA-Z0-9_]+"):`)
 	jsonStr = re.ReplaceAllString(jsonStr, `,"$1:`)
@@ -872,6 +992,26 @@ func (ls *LLMService) attemptToFixJSON(jsonStr string) string {
 	// Insert a comma between a closing quote/bracket/number and an immediately following property name (quote)
 	re = regexp.MustCompile(`(["}\]0-9])\s*"([a-zA-Z0-9_]+"):`)
 	jsonStr = re.ReplaceAllString(jsonStr, `$1,"$2:`)
+
+	// Fix unescaped quotes inside string values
+	// This is a more sophisticated approach to handle quotes that should be escaped
+	// Look for patterns like: "key": "value with "quotes" inside"
+	re = regexp.MustCompile(`"([^"]*)"([^"]*)"([^"]*)"`)
+	jsonStr = re.ReplaceAllStringFunc(jsonStr, func(match string) string {
+		// If this looks like a key-value pair with unescaped quotes, fix it
+		if strings.Contains(match, `":`) {
+			// Escape the inner quotes
+			parts := strings.Split(match, `":`)
+			if len(parts) >= 2 {
+				key := parts[0]
+				value := strings.Join(parts[1:], `":`)
+				// Escape quotes in the value part
+				value = strings.ReplaceAll(value, `"`, `\"`)
+				return key + `":` + value
+			}
+		}
+		return match
+	})
 
 	return jsonStr
 }
