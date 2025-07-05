@@ -335,6 +335,12 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 		return
 	}
 
+	// Check if file is being processed or RCA is running
+	if logFile.Status == "processing" || logFile.RCAAnalysisStatus == "pending" || logFile.RCAAnalysisStatus == "running" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete a log file that is currently processing or has RCA analysis in progress."})
+		return
+	}
+
 	// Create and process RCA job with options
 	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking)
 	if err != nil {
@@ -535,7 +541,15 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 		return
 	}
 
-	// Delete in transaction
+	// Check if file is being processed or RCA is running
+	if logFile.Status == "processing" || logFile.RCAAnalysisStatus == "pending" || logFile.RCAAnalysisStatus == "running" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete a log file that is currently processing or has RCA analysis in progress."})
+		return
+	}
+
+	// Check for hardDelete query param
+	hardDelete := c.DefaultQuery("hardDelete", "false") == "true"
+
 	tx := lc.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -543,25 +557,67 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 		}
 	}()
 
-	// Delete RCA analysis jobs
-	if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.Job{}).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
-		return
-	}
-
-	// Delete log entries
-	if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogEntry{}).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
-		return
-	}
-
-	// Delete log file
-	if err := tx.Delete(&logFile).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
-		return
+	if hardDelete {
+		// HARD DELETE: Remove all related data from all DB tables
+		// 1. Delete all jobs for this log file
+		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.Job{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
+			return
+		}
+		// 2. Delete all log entries for this log file
+		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.LogEntry{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
+			return
+		}
+		// 3. Delete all log analyses for this log file
+		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.LogAnalysis{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log analyses"})
+			return
+		}
+		// 4. Delete all log analysis memories for this log file
+		var analysisMemories []models.LogAnalysisMemory
+		if err := tx.Where("log_file_id = ?", logFileID).Find(&analysisMemories).Error; err == nil && len(analysisMemories) > 0 {
+			var memoryIDs []uint
+			for _, m := range analysisMemories {
+				memoryIDs = append(memoryIDs, m.ID)
+			}
+			// 5. Delete all feedback for these analysis memories
+			if err := tx.Where("analysis_memory_id IN ?", memoryIDs).Delete(&models.LogAnalysisFeedback{}).Error; err != nil {
+				// If feedback is not present, ignore or log
+			}
+			// 6. Delete the analysis memories themselves
+			if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogAnalysisMemory{}).Error; err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log analysis memories"})
+				return
+			}
+		}
+		// 7. Delete the log file itself
+		if err := tx.Delete(&logFile).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
+			return
+		}
+	} else {
+		// SOFT DELETE: Only remove jobs, log entries, and the log file
+		if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.Job{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
+			return
+		}
+		if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogEntry{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
+			return
+		}
+		if err := tx.Delete(&logFile).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
+			return
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {

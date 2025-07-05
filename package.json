@@ -34,5 +34,9 @@
     "golang"
   ],
   "author": "AutoLog Team",
-  "license": "MIT"
-} 
+  "license": "MIT",
+  "dependencies": {
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2"
+  }
+}

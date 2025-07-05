@@ -1,8 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import RCAnalysis from '../components/RCAnalysis';
 import AdminLogs from '../components/AdminLogs';
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import {
+  LOGS_POLL_INTERVAL_MS,
+  UPLOAD_PROGRESS_BAR_HEIGHT,
+  PDF_SUMMARY_WRAP_WIDTH,
+  PDF_ROOT_CAUSE_WRAP_WIDTH,
+  PDF_RECOMMENDATION_WRAP_WIDTH,
+  PDF_TABLE_COLUMN_WIDTHS
+} from '../constants';
 
 const Logs = () => {
   const { token } = useAuth();
@@ -17,9 +27,33 @@ const Logs = () => {
   const [llmModalOpen, setLlmModalOpen] = useState(false);
   const [llmModalAnalysis, setLlmModalAnalysis] = useState(null);
   const [llmModalLogFile, setLlmModalLogFile] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const [userRole, setUserRole] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteTargetLogFile, setDeleteTargetLogFile] = useState(null);
+  const [hardDelete, setHardDelete] = useState(false);
 
+  // After logFiles are updated, check if polling should be running
+  useEffect(() => {
+    let interval = null;
+    const shouldPoll = logFiles.some(
+      (log) =>
+        log.status === 'processing' ||
+        log.rcaAnalysisStatus === 'pending' ||
+        log.rcaAnalysisStatus === 'running'
+    );
+    if (shouldPoll) {
+      interval = setInterval(() => {
+        fetchLogFiles();
+      }, LOGS_POLL_INTERVAL_MS);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [logFiles]);
+
+  // On mount, fetch logs and user role
   useEffect(() => {
     fetchLogFiles();
     fetchUserRole();
@@ -70,6 +104,7 @@ const Logs = () => {
     }
 
     setUploading(true);
+    setUploadProgress(0);
     const formData = new FormData();
     formData.append('logfile', selectedFile);
 
@@ -78,16 +113,24 @@ const Logs = () => {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percent);
+          }
+        },
       });
       
       setMessage('Log file uploaded successfully! Processing in background...');
       setSelectedFile(null);
+      setUploadProgress(0);
       document.getElementById('file-input').value = '';
       
       // Refresh log files list
-      setTimeout(fetchLogFiles, 2000);
+      fetchLogFiles();
     } catch (error) {
       setMessage('Upload failed: ' + error.message);
+      setUploadProgress(0);
     } finally {
       setUploading(false);
     }
@@ -106,31 +149,41 @@ const Logs = () => {
   const handleAnalyze = async (logFileId) => {
     try {
       const response = await api.post(`/logs/${logFileId}/analyze`);
-      setMessage('RCA analysis started: ' + response.data.message);
-      
+      const msg = response.data && response.data.message
+        ? response.data.message
+        : 'RCA analysis started.';
+      setMessage('RCA analysis started: ' + msg);
       // Refresh log files to show updated status
-      setTimeout(fetchLogFiles, 1000);
+      fetchLogFiles();
     } catch (error) {
       setMessage('Analysis failed: ' + (error.response?.data?.error || error.message));
     }
   };
 
-  const handleDelete = async (logFileId) => {
-    if (!window.confirm('Are you sure you want to delete this log file?')) {
-      return;
-    }
+  const handleDelete = (logFileId) => {
+    const logFile = logFiles.find(l => l.id === logFileId);
+    setDeleteTargetLogFile(logFile);
+    setShowDeleteModal(true);
+  };
 
+  const confirmDelete = async () => {
+    if (!deleteTargetLogFile) return;
     try {
-      await api.delete(`/logs/${logFileId}`);
+      await api.delete(`/logs/${deleteTargetLogFile.id}?hardDelete=${hardDelete}`);
       setMessage('Log file deleted successfully');
+      setShowDeleteModal(false);
+      setDeleteTargetLogFile(null);
+      setHardDelete(false);
       fetchLogFiles();
-      
-      if (selectedLogFile && selectedLogFile.id === logFileId) {
+      if (selectedLogFile && selectedLogFile.id === deleteTargetLogFile.id) {
         setSelectedLogFile(null);
         setLogEntries([]);
       }
     } catch (error) {
       setMessage('Failed to delete log file: ' + error.message);
+      setShowDeleteModal(false);
+      setDeleteTargetLogFile(null);
+      setHardDelete(false);
     }
   };
 
@@ -178,6 +231,228 @@ const Logs = () => {
     }
   };
 
+  // Helper to generate PDF from RCA data
+  const handleDownloadRcaPdf = () => {
+    if (!llmModalAnalysis) return;
+    let analysis = llmModalAnalysis;
+    if (analysis && typeof analysis === 'object') {
+      if ('final' in analysis) analysis = analysis.final;
+      else if ('analysis' in analysis) analysis = analysis.analysis;
+    }
+    const doc = new jsPDF();
+    let y = 10;
+    doc.setFontSize(16);
+    doc.text(`Root Cause Analysis for: ${llmModalLogFile?.filename || ''}`, 10, y);
+    y += 10;
+    doc.setFontSize(12);
+    doc.text(`Summary: ${analysis.summary || ''}`, 10, y);
+    y += 8;
+    doc.text(`Severity: ${analysis.severity || ''}`, 10, y);
+    y += 8;
+    if (analysis.rootCause) {
+      doc.text(`Root Cause: ${analysis.rootCause}`, 10, y);
+      y += 8;
+    }
+    if (Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0) {
+      doc.text('Recommendations:', 10, y);
+      y += 8;
+      analysis.recommendations.forEach((rec) => {
+        doc.text(`- ${rec}`, 14, y);
+        y += 7;
+      });
+    }
+    y += 4;
+    if (typeof analysis.criticalErrors === 'number') {
+      doc.text(`Critical Errors: ${analysis.criticalErrors}`, 10, y);
+      y += 7;
+    }
+    if (typeof analysis.nonCriticalErrors === 'number') {
+      doc.text(`Non-critical Errors: ${analysis.nonCriticalErrors}`, 10, y);
+      y += 7;
+    }
+    if (typeof analysis.errorCount === 'number') {
+      doc.text(`Total Errors: ${analysis.errorCount}`, 10, y);
+      y += 7;
+    }
+    if (typeof analysis.warningCount === 'number') {
+      doc.text(`Warnings: ${analysis.warningCount}`, 10, y);
+      y += 7;
+    }
+    y += 4;
+    if (Array.isArray(analysis.errorAnalysis) && analysis.errorAnalysis.length > 0) {
+      doc.text('Error Analysis:', 10, y);
+      y += 8;
+      // Table header
+      doc.setFont(undefined, 'bold');
+      doc.text('Pattern', 10, y);
+      doc.text('Count', 50, y);
+      doc.text('Severity', 65, y);
+      doc.text('First', 85, y);
+      doc.text('Last', 120, y);
+      doc.text('Root Cause', 10, y + 6);
+      doc.text('Impact', 50, y + 6);
+      doc.text('Fix', 85, y + 6);
+      doc.setFont(undefined, 'normal');
+      y += 12;
+      analysis.errorAnalysis.forEach((err) => {
+        if (y > 270) { doc.addPage(); y = 10; }
+        doc.text(String(err.errorPattern || ''), 10, y);
+        doc.text(String(err.errorCount || ''), 50, y);
+        doc.text(String(err.severity || ''), 65, y);
+        doc.text(String(err.firstOccurrence || ''), 85, y);
+        doc.text(String(err.lastOccurrence || ''), 120, y);
+        y += 6;
+        doc.text(String(err.rootCause || ''), 10, y);
+        doc.text(String(err.impact || ''), 50, y);
+        doc.text(String(err.fix || ''), 85, y);
+        y += 8;
+      });
+    }
+    doc.save(`RCA_${llmModalLogFile?.filename || 'report'}.pdf`);
+  };
+
+  const handleDownloadRcaPdfForLog = async (logFile) => {
+    try {
+      // Fetch RCA analysis for this log file
+      const response = await api.get(`/logs/${logFile.id}/rca-results`);
+      let analysis = response.data.analysis;
+      if (analysis && typeof analysis === 'object') {
+        if ('final' in analysis) analysis = analysis.final;
+        else if ('analysis' in analysis) analysis = analysis.analysis;
+      }
+      // Load logo image as base64
+      const logoUrl = '/autolog.png';
+      const getImageBase64 = (url) => new Promise((resolve, reject) => {
+        const img = new window.Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = function () {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = reject;
+        img.src = url;
+      });
+      const logoBase64 = await getImageBase64(logoUrl);
+      const doc = new jsPDF();
+      // Add logo
+      doc.addImage(logoBase64, 'PNG', 10, 8, 32, 16);
+      // Branding/Header
+      doc.setFontSize(18);
+      doc.setTextColor(40, 40, 80);
+      doc.text('AutoLog - Root Cause Analysis Report', 105, 18, { align: 'center' });
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 200, 10, { align: 'right' });
+      doc.setDrawColor(40, 40, 80);
+      doc.line(10, 22, 200, 22);
+      let y = 28;
+      doc.setFontSize(12);
+      doc.setTextColor(0);
+      doc.text(`Log File: ${logFile.filename || ''}`, 14, y);
+      y += 8;
+      doc.setFont(undefined, 'bold');
+      doc.text('Summary', 14, y);
+      doc.setFont(undefined, 'normal');
+      const summaryLines = doc.splitTextToSize(analysis.summary || '', PDF_SUMMARY_WRAP_WIDTH);
+      doc.text(summaryLines, 40, y);
+      y += summaryLines.length * 6;
+      doc.setFont(undefined, 'bold');
+      doc.text('Severity:', 14, y);
+      doc.setFont(undefined, 'normal');
+      doc.text(String(analysis.severity || ''), 40, y);
+      y += 8;
+      doc.setFont(undefined, 'bold');
+      doc.text('Root Cause', 14, y);
+      doc.setFont(undefined, 'normal');
+      const rootCauseLines = doc.splitTextToSize(analysis.rootCause || '', PDF_ROOT_CAUSE_WRAP_WIDTH);
+      doc.text(rootCauseLines, 40, y);
+      y += rootCauseLines.length * 6;
+      doc.setFont(undefined, 'bold');
+      doc.text('Recommendations', 14, y);
+      doc.setFont(undefined, 'normal');
+      if (Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0) {
+        analysis.recommendations.forEach((rec) => {
+          y += 7;
+          const recLines = doc.splitTextToSize(`- ${rec}`, PDF_RECOMMENDATION_WRAP_WIDTH);
+          doc.text(recLines, 20, y);
+          y += (recLines.length - 1) * 6;
+        });
+      } else {
+        y += 7;
+        doc.text('-', 20, y);
+      }
+      y += 10;
+      doc.setFont(undefined, 'bold');
+      doc.text('Critical Errors:', 14, y);
+      doc.setFont(undefined, 'normal');
+      doc.text(String(analysis.criticalErrors ?? '-'), 50, y);
+      doc.setFont(undefined, 'bold');
+      doc.text('Non-critical Errors:', 80, y);
+      doc.setFont(undefined, 'normal');
+      doc.text(String(analysis.nonCriticalErrors ?? '-'), 130, y);
+      y += 10;
+      doc.setFont(undefined, 'bold');
+      doc.text('Error Analysis', 14, y);
+      y += 4;
+      // Error Analysis Table
+      if (Array.isArray(analysis.errorAnalysis) && analysis.errorAnalysis.length > 0) {
+        autoTable(doc, {
+          startY: y + 2,
+          head: [[
+            'Pattern', 'Count', 'Severity', 'First', 'Last',
+            'Root Cause', 'Impact', 'Fix', 'Related'
+          ]],
+          body: analysis.errorAnalysis.map((err) => [
+            err.errorPattern || '',
+            err.errorCount || '',
+            err.severity || '',
+            err.firstOccurrence || '',
+            err.lastOccurrence || '',
+            err.rootCause || '',
+            err.impact || '',
+            err.fix || '',
+            (Array.isArray(err.relatedErrors) && err.relatedErrors.length > 0)
+              ? err.relatedErrors.join(', ') : '-'
+          ]),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [40, 40, 80], textColor: 255, fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [245, 245, 255] },
+          margin: { left: 10, right: 10 },
+          tableWidth: 'wrap',
+          columnStyles: {
+            0: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.pattern }, // Pattern
+            1: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.count }, // Count
+            2: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.severity }, // Severity
+            3: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.first }, // First
+            4: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.last }, // Last
+            5: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.rootCause, cellPadding: 2, valign: 'top', maxWidth: PDF_TABLE_COLUMN_WIDTHS.rootCause }, // Root Cause
+            6: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.impact, cellPadding: 2, valign: 'top', maxWidth: PDF_TABLE_COLUMN_WIDTHS.impact }, // Impact
+            7: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.fix, cellPadding: 2, valign: 'top', maxWidth: PDF_TABLE_COLUMN_WIDTHS.fix }, // Fix
+            8: { cellWidth: PDF_TABLE_COLUMN_WIDTHS.related, cellPadding: 2, valign: 'top', maxWidth: PDF_TABLE_COLUMN_WIDTHS.related }, // Related
+          },
+          didDrawCell: (data) => {
+            // Optionally, further custom cell drawing logic
+          },
+        });
+        y = doc.lastAutoTable.finalY + 10;
+      } else {
+        y += 8;
+        doc.setFont(undefined, 'normal');
+        doc.text('No error analysis data available.', 14, y);
+      }
+      // Footer
+      doc.setFontSize(10);
+      doc.setTextColor(120);
+      doc.text('© 2024 AutoLog. All rights reserved.', 105, 290, { align: 'center' });
+      doc.save(`RCA_${logFile.filename || 'report'}.pdf`);
+    } catch (error) {
+      alert('Failed to fetch RCA analysis or generate PDF.');
+    }
+  };
 
 
   return (
@@ -210,11 +485,20 @@ const Logs = () => {
               {message}
             </div>
           )}
+          {uploadProgress > 0 && uploading && (
+            <div className="w-full bg-gray-200 rounded" style={{ height: `${UPLOAD_PROGRESS_BAR_HEIGHT}px`, marginTop: '1rem' }}>
+              <div
+                className="bg-blue-500 h-full rounded transition-all duration-200"
+                style={{ width: `${uploadProgress}%` }}
+              ></div>
+              <div className="text-xs text-gray-700 mt-1 text-right">{uploadProgress}%</div>
+            </div>
+          )}
         </div>
 
         {/* Log Connectors */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold mb-4">🔗 Log Connectors</h2>
+        <div className="bg-white rounded-lg shadow-md p-6 opacity-60 pointer-events-none select-none">
+          <h2 className="text-xl font-semibold mb-4">🔗 Log Connectors <span className='ml-2 text-sm text-gray-500'>(To Be Developed)</span></h2>
           <div className="space-y-3">
             <div className="flex items-center justify-between p-3 border border-gray-200 rounded">
               <div className="flex items-center">
@@ -224,11 +508,10 @@ const Logs = () => {
                   <p className="text-sm text-gray-600">AWS Logs Integration</p>
                 </div>
               </div>
-              <button className="bg-orange-600 text-white px-4 py-2 rounded text-sm hover:bg-orange-700">
+              <button className="bg-orange-300 text-white px-4 py-2 rounded text-sm cursor-not-allowed opacity-70" disabled>
                 Configure
               </button>
             </div>
-            
             <div className="flex items-center justify-between p-3 border border-gray-200 rounded">
               <div className="flex items-center">
                 <span className="text-2xl mr-3">🔍</span>
@@ -237,11 +520,10 @@ const Logs = () => {
                   <p className="text-sm text-gray-600">Enterprise Logs</p>
                 </div>
               </div>
-              <button className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+              <button className="bg-blue-300 text-white px-4 py-2 rounded text-sm cursor-not-allowed opacity-70" disabled>
                 Configure
               </button>
             </div>
-            
             <div className="flex items-center justify-between p-3 border border-gray-200 rounded">
               <div className="flex items-center">
                 <span className="text-2xl mr-3">📊</span>
@@ -250,7 +532,7 @@ const Logs = () => {
                   <p className="text-sm text-gray-600">Search & Analytics</p>
                 </div>
               </div>
-              <button className="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700">
+              <button className="bg-green-300 text-white px-4 py-2 rounded text-sm cursor-not-allowed opacity-70" disabled>
                 Configure
               </button>
             </div>
@@ -301,12 +583,21 @@ const Logs = () => {
                     >
                       View
                     </button>
-                    {logFile.status === 'completed' && logFile.rcaAnalysisStatus !== 'pending' && logFile.rcaAnalysisStatus !== 'running' && (
+                    {/* Show Generate or Re-Generate RCA based on status */}
+                    {logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
                       <button
                         onClick={() => handleAnalyze(logFile.id)}
                         className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
                       >
                         Generate RCA
+                      </button>
+                    )}
+                    {logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
+                      <button
+                        onClick={() => handleAnalyze(logFile.id)}
+                        className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700"
+                      >
+                        Re-Generate RCA
                       </button>
                     )}
                     {(logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (
@@ -318,12 +609,21 @@ const Logs = () => {
                       </button>
                     )}
                     {logFile.rcaAnalysisStatus === 'completed' && (
-                      <button
-                        onClick={() => handleShowLLMAnalysis(logFile)}
-                        className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
-                      >
-                        View RCA
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handleShowLLMAnalysis(logFile)}
+                          className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+                        >
+                          View RCA
+                        </button>
+                        <button
+                          onClick={() => handleDownloadRcaPdfForLog(logFile)}
+                          className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out"
+                          title="Download RCA as PDF"
+                        >
+                          Download RCA PDF
+                        </button>
+                      </>
                     )}
                     <button
                       onClick={() => handleDelete(logFile.id)}
@@ -407,17 +707,14 @@ const Logs = () => {
       {/* LLM Analysis Modal */}
       {llmModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl relative">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg sm:max-w-xl md:max-w-2xl p-2 sm:p-4 md:p-6 relative overflow-y-auto max-h-[90vh]">
             <button
               onClick={() => setLlmModalOpen(false)}
-              className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-2xl"
+              className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-2xl z-10"
               aria-label="Close"
             >
               &times;
             </button>
-            <h2 className="text-xl font-semibold mb-4">
-              Root Cause Analysis for: {llmModalLogFile?.filename}
-            </h2>
             {llmModalAnalysis?.error ? (
               <div className="text-red-600">{llmModalAnalysis.error}</div>
             ) : llmModalAnalysis ? (
@@ -536,6 +833,37 @@ const Logs = () => {
             ) : (
               <div>No analysis found for this log file.</div>
             )}
+          </div>
+        </div>
+      )}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm relative">
+            <h2 className="text-lg font-semibold mb-4">Delete Log File</h2>
+            <p className="mb-4">Are you sure you want to delete <span className="font-bold">{deleteTargetLogFile?.filename}</span>?</p>
+            <label className="flex items-center mb-4">
+              <input
+                type="checkbox"
+                checked={hardDelete}
+                onChange={e => setHardDelete(e.target.checked)}
+                className="mr-2"
+              />
+              <span>Hard Delete (remove all related entries, jobs, and data from DB)</span>
+            </label>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => { setShowDeleteModal(false); setDeleteTargetLogFile(null); setHardDelete(false); }}
+                className="bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

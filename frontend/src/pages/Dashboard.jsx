@@ -19,26 +19,24 @@ function Dashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      const [logsResponse] = await Promise.all([
-        api.get('/logs?limit=5')
-      ])
-      const logs = logsResponse.data?.logFiles || []
-      setRecentAnalyses(logs)
-      // Calculate stats from logs
+      const logsResponse = await api.get('/logs?limit=1000');
+      const logs = logsResponse.data?.logFiles || [];
+      setRecentAnalyses(logs.slice(0, 5));
+      // Use real stats from logs
       const stats = {
-        totalLogs: logs.length * 1000, // Mock data
-        analyzedLogs: logs.filter(l => l.status === 'completed').length * 500,
-        rcaReports: logs.filter(l => l.status === 'completed').length,
-        activeConnectors: 3, // Mock data for CloudWatch, Splunk, etc.
+        totalLogs: logs.length,
+        analyzedLogs: logs.filter(l => l.status === 'completed').length,
+        rcaReports: logs.filter(l => l.rcaAnalysisStatus === 'completed').length,
+        activeConnectors: 0, // Set to 0 or fetch from backend if available
         anomalies: logs.filter(l => l.errorCount > 0).length
-      }
-      setStats(stats)
+      };
+      setStats(stats);
     } catch (error) {
-      console.error('Error fetching dashboard data:', error)
+      console.error('Error fetching dashboard data:', error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const getAnalysisStatusColor = (status) => {
     switch (status) {
