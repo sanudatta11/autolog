@@ -455,6 +455,23 @@ IMPORTANT RESPONSE INSTRUCTIONS:
 	return prompt
 }
 
+// CreateDetailedErrorAnalysisPromptWithLearning creates a prompt with learning insights
+func (ls *LLMService) CreateDetailedErrorAnalysisPromptWithLearning(request LogAnalysisRequest, errorEntries []models.LogEntry, learningInsights *LearningInsights) string {
+	// Create base prompt
+	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, learningInsights.SuggestedContext)
+
+	// Add learning confidence information
+	if learningInsights.ConfidenceBoost > 0 {
+		prompt += fmt.Sprintf("\n\nLEARNING INSIGHTS:\n- Analysis confidence boosted by %.1f%% based on similar past incidents\n", learningInsights.ConfidenceBoost*100)
+	}
+
+	if len(learningInsights.PatternMatches) > 0 {
+		prompt += "- Identified patterns from historical analysis that may be relevant\n"
+	}
+
+	return prompt
+}
+
 func (ls *LLMService) CreateDetailedErrorAnalysisPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry, similarIncidents string) string {
 	return ls.createDetailedErrorAnalysisPrompt(request, errorEntries, similarIncidents)
 }

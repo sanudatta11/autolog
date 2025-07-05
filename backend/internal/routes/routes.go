@@ -20,12 +20,14 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 
 	// Initialize services
 	parsingRuleService := services.NewParsingRuleService(db)
+	learningService := services.NewLearningService(db, llmService)
 
 	// Initialize controllers
 	authController := controllers.NewAuthController(db)
 	userController := controllers.NewUserController(db)
 	logController := controllers.NewLogController(db, llmService, stopChan)
 	parsingRuleController := controllers.NewParsingRuleController(parsingRuleService)
+	learningController := controllers.NewLearningController(db, learningService)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -106,6 +108,17 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				parsingRules.DELETE("/:id", parsingRuleController.DeleteParsingRule)
 				parsingRules.POST("/test", parsingRuleController.TestParsingRule)
 				parsingRules.GET("/active", parsingRuleController.GetActiveParsingRules)
+			}
+
+			// Learning and AI Insights
+			learning := protected.Group("/learning")
+			{
+				learning.GET("/insights/:logFileID", learningController.GetLearningInsights)
+				learning.GET("/patterns", learningController.GetPatterns)
+				learning.GET("/patterns/:patternID", learningController.GetPattern)
+				learning.DELETE("/patterns/:patternID", learningController.DeletePattern)
+				learning.GET("/metrics", learningController.GetLearningMetrics)
+				learning.GET("/similar-incidents/:logFileID", learningController.GetSimilarIncidents)
 			}
 		}
 	}
