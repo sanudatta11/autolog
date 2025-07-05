@@ -1,0 +1,605 @@
+{
+  "ml_parser_test_cases": [
+    {
+      "name": "Simple syslog",
+      "description": "Basic syslog format with timestamps and log levels",
+      "lines": [
+        "2024-06-01 12:00:00 INFO Started system",
+        "2024-06-01 12:01:00 ERROR Disk full",
+        "2024-06-01 12:02:00 WARN High memory usage: 85%",
+        "2024-06-01 12:03:00 DEBUG Debugging info here",
+        "2024-06-01 12:04:00 FATAL Kernel panic: system halted"
+      ],
+      "expect": [
+        {
+          "level": "INFO",
+          "message_contains": "Started system"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "Disk full"
+        },
+        {
+          "level": "WARN",
+          "message_contains": "High memory usage"
+        },
+        {
+          "level": "DEBUG",
+          "message_contains": "Debugging info"
+        },
+        {
+          "level": "FATAL",
+          "message_contains": "Kernel panic"
+        }
+      ]
+    },
+    {
+      "name": "Apache access log",
+      "description": "Apache/Nginx access log format with IP addresses and HTTP requests",
+      "lines": [
+        "127.0.0.1 - - [01/Jun/2024:12:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 2326",
+        "127.0.0.1 - - [01/Jun/2024:12:01:00 +0000] \"POST /login HTTP/1.1\" 401 512",
+        "127.0.0.1 - - [01/Jun/2024:12:02:00 +0000] \"GET /api/data HTTP/1.1\" 500 890",
+        "127.0.0.1 - - [01/Jun/2024:12:03:00 +0000] \"PUT /api/update HTTP/1.1\" 200 234",
+        "127.0.0.1 - - [01/Jun/2024:12:04:00 +0000] \"DELETE /api/delete HTTP/1.1\" 404 123"
+      ],
+      "expect": [
+        {
+          "message_contains": "/index.html"
+        },
+        {
+          "message_contains": "/login"
+        },
+        {
+          "message_contains": "/api/data"
+        },
+        {
+          "message_contains": "/api/update"
+        },
+        {
+          "message_contains": "/api/delete"
+        }
+      ]
+    },
+    {
+      "name": "Unstructured error",
+      "description": "Unstructured error messages without clear timestamps or levels",
+      "lines": [
+        "Something went wrong at 12:02:00!",
+        "Critical failure in module X",
+        "Disk is almost full!",
+        "User not found: john.doe",
+        "Timeout occurred while connecting to database"
+      ],
+      "expect": [
+        {
+          "message_contains": "Something went wrong"
+        },
+        {
+          "message_contains": "Critical failure"
+        },
+        {
+          "message_contains": "Disk is almost full"
+        },
+        {
+          "message_contains": "User not found"
+        },
+        {
+          "message_contains": "Timeout occurred"
+        }
+      ]
+    },
+    {
+      "name": "Kubernetes log",
+      "description": "Kubernetes pod and container logs with structured format",
+      "lines": [
+        "2024-06-01T12:03:00Z pod1 container1 ERROR CrashLoopBackOff",
+        "2024-06-01T12:03:01Z pod2 container2 WARN Resource limits approaching",
+        "2024-06-01T12:03:02Z pod3 container3 INFO Pod started",
+        "2024-06-01T12:03:03Z pod1 container1 DEBUG Health check running",
+        "2024-06-01T12:03:04Z pod2 container2 ERROR Service discovery failed"
+      ],
+      "expect": [
+        {
+          "level": "ERROR",
+          "message_contains": "CrashLoopBackOff"
+        },
+        {
+          "level": "WARN",
+          "message_contains": "Resource limits"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Pod started"
+        },
+        {
+          "level": "DEBUG",
+          "message_contains": "Health check"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "Service discovery"
+        }
+      ]
+    },
+    {
+      "name": "Security log",
+      "description": "Security-related logs with authentication and access attempts",
+      "lines": [
+        "2024-06-01T12:04:00Z SECURITY WARN Unauthorized access from 10.0.0.1",
+        "2024-06-01T12:04:01Z SECURITY INFO Successful authentication: user=admin",
+        "2024-06-01T12:04:02Z SECURITY ERROR Unauthorized access attempt: resource=/admin",
+        "2024-06-01T12:04:03Z SECURITY INFO Password changed: user=john",
+        "2024-06-01T12:04:04Z SECURITY WARN Multiple failed attempts: user=guest"
+      ],
+      "expect": [
+        {
+          "level": "WARN",
+          "message_contains": "Unauthorized access"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Successful authentication"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "Unauthorized access attempt"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Password changed"
+        },
+        {
+          "level": "WARN",
+          "message_contains": "Multiple failed attempts"
+        }
+      ]
+    },
+    {
+      "name": "Stack trace multiline",
+      "description": "Multi-line stack traces that should be stitched together",
+      "lines": [
+        "2024-06-01 12:05:00 ERROR Exception in thread main",
+        "Traceback (most recent call last):",
+        "  File \"main.py\", line 1, in <module>",
+        "    raise Exception('fail')",
+        "Exception: fail",
+        "2024-06-01 12:05:01 ERROR Another error occurred",
+        "Traceback (most recent call last):",
+        "  File \"worker.py\", line 10, in <module>",
+        "    do_work()",
+        "RuntimeError: work failed"
+      ],
+      "expect": [
+        {
+          "level": "ERROR",
+          "message_contains": "Exception in thread main"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "Traceback"
+        }
+      ]
+    },
+    {
+      "name": "JSON logs",
+      "description": "Structured JSON logs with embedded timestamps and levels",
+      "lines": [
+        "{\"timestamp\":\"2024-06-01T12:00:00Z\",\"level\":\"INFO\",\"message\":\"System started\",\"user\":\"admin\"}",
+        "{\"timestamp\":\"2024-06-01T12:01:00Z\",\"level\":\"WARN\",\"message\":\"High memory usage\",\"memory_percent\":85}",
+        "{\"timestamp\":\"2024-06-01T12:02:00Z\",\"level\":\"ERROR\",\"message\":\"Database error\",\"error_code\":\"DB001\"}",
+        "{\"timestamp\":\"2024-06-01T12:03:00Z\",\"level\":\"INFO\",\"message\":\"Request processed\",\"duration\":150}",
+        "{\"timestamp\":\"2024-06-01T12:04:00Z\",\"level\":\"DEBUG\",\"message\":\"Cache miss\",\"key\":\"user_123\"}"
+      ],
+      "expect": [
+        {
+          "level": "INFO",
+          "message_contains": "System started"
+        },
+        {
+          "level": "WARN",
+          "message_contains": "High memory usage"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "Database error"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Request processed"
+        },
+        {
+          "level": "DEBUG",
+          "message_contains": "Cache miss"
+        }
+      ]
+    },
+    {
+      "name": "Malformed JSON and mixed",
+      "description": "Mixed content with malformed JSON and unstructured lines",
+      "lines": [
+        "{\"timestamp\":\"2024-06-01T12:00:00Z\",\"level\":\"INFO\",\"message\":\"Good JSON\"}",
+        "{\"timestamp\":\"2024-06-01T12:01:00Z\",\"level\":\"WARN\",\"message\":\"Missing end brace\"",
+        "{\"timestamp\":\"2024-06-01T12:02:00Z\",\"level\":\"ERROR\",\"message\":\"Extra comma\",}",
+        "{timestamp:2024-06-01T12:03:00Z,level:INFO,message:\"Unquoted keys\"}",
+        "{\"timestamp\":\"2024-06-01T12:04:00Z\",\"level\":\"DEBUG\",\"message\":\"Trailing comma\",}",
+        "2024-06-01 12:04:01 INFO Not JSON at all",
+        "Random unstructured line"
+      ],
+      "expect": [
+        {
+          "level": "INFO",
+          "message_contains": "Good JSON"
+        },
+        {
+          "message_contains": "Missing end brace"
+        },
+        {
+          "message_contains": "Extra comma"
+        },
+        {
+          "message_contains": "Unquoted keys"
+        },
+        {
+          "message_contains": "Trailing comma"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Not JSON at all"
+        },
+        {
+          "message_contains": "Random unstructured"
+        }
+      ]
+    },
+    {
+      "name": "Mixed log types",
+      "description": "Mixed log formats in a single file",
+      "lines": [
+        "2024-06-01 12:00:00 INFO Started system",
+        "{\"timestamp\":\"2024-06-01T12:01:00Z\",\"level\":\"WARN\",\"message\":\"High memory usage\"}",
+        "127.0.0.1 - - [01/Jun/2024:12:02:00 +0000] \"GET /api/data HTTP/1.1\" 500 890",
+        "2024-06-01T12:03:00Z pod1 container1 ERROR CrashLoopBackOff",
+        "Something went wrong at 12:04:00!",
+        "2024-06-01T12:05:00Z SECURITY INFO Successful authentication: user=admin",
+        "{\"timestamp\":\"2024-06-01T12:06:00Z\",\"level\":\"DEBUG\",\"message\":\"Cache miss\"}"
+      ],
+      "expect": [
+        {
+          "level": "INFO",
+          "message_contains": "Started system"
+        },
+        {
+          "level": "WARN",
+          "message_contains": "High memory usage"
+        },
+        {
+          "message_contains": "/api/data"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "CrashLoopBackOff"
+        },
+        {
+          "message_contains": "Something went wrong"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Successful authentication"
+        },
+        {
+          "level": "DEBUG",
+          "message_contains": "Cache miss"
+        }
+      ]
+    },
+    {
+      "name": "Edge cases and empty lines",
+      "description": "Edge cases including empty lines, malformed content, and partial data",
+      "lines": [
+        "",
+        "   ",
+        "2024-06-01 12:00:00 INFO Only one field",
+        "{\"message\":\"No timestamp or level\"}",
+        "2024-06-01 12:01:00",
+        "ERROR: Something bad happened",
+        "2024-06-01 12:02:00 FATAL",
+        "Just a message"
+      ],
+      "expect": [
+        {
+          "level": "INFO",
+          "message_contains": "Only one field"
+        },
+        {
+          "message_contains": "No timestamp or level"
+        },
+        {
+          "message_contains": "2024-06-01 12:01:00"
+        },
+        {
+          "message_contains": "ERROR: Something bad happened"
+        },
+        {
+          "level": "FATAL",
+          "message_contains": "2024-06-01 12:02:00"
+        },
+        {
+          "message_contains": "Just a message"
+        }
+      ]
+    },
+    {
+      "category": "ml_parser_test_cases",
+      "name": "Docker Container Logs",
+      "description": "Docker container logs with timestamps and structured format",
+      "lines": [
+        "2024-06-01T12:00:00.123Z container1 INFO Container started successfully",
+        "2024-06-01T12:00:01.456Z container2 WARN High CPU usage: 90%",
+        "2024-06-01T12:00:02.789Z container3 ERROR Out of memory exception",
+        "2024-06-01T12:00:03.012Z container1 INFO Health check passed",
+        "2024-06-01T12:00:04.345Z container2 DEBUG Processing request: /api/data"
+      ],
+      "expect": [
+        {
+          "level": "INFO",
+          "message_contains": "Container started"
+        },
+        {
+          "level": "WARN",
+          "message_contains": "High CPU usage"
+        },
+        {
+          "level": "ERROR",
+          "message_contains": "Out of memory"
+        },
+        {
+          "level": "INFO",
+          "message_contains": "Health check passed"
+        },
+        {
+          "level": "DEBUG",
+          "message_contains": "Processing request"
+        }
+      ]
+    },
+    {
+      "name": "Malformed and Corrupted Logs",
+      "description": "Logs with incomplete JSON, broken lines, and encoding issues.",
+      "lines": [
+        "{\"timestamp\":\"2024-06-01T12:00:00Z\",\"level\":\"INFO\",\"message\":\"Good JSON\"}",
+        "{\"timestamp\":\"2024-06-01T12:01:00Z\",\"level\":\"WARN\",\"message\":\"Missing end brace\"",
+        "2024-06-01 12:02:00 INFO Normal line after binary",
+        "{\"timestamp\":\"2024-06-01T12:03:00Z\",\"level\":\"ERROR\",\"message\":\"Corrupted \uFFFD character\"}",
+        "2024-06-01 12:04:00 INFO Line with bad encoding: caf\\xe9",
+        "2024-06-01 12:05:00 INFO Incomplete",
+        "2024-06-01 12:06:00 INFO \u0007Bell character in log"
+      ],
+      "expect": [
+        { "level": "INFO", "message_contains": "Good JSON" },
+        { "message_contains": "Missing end brace" },
+        { "message_contains": "Normal line after binary" },
+        { "level": "ERROR", "message_contains": "Corrupted" },
+        { "message_contains": "bad encoding" },
+        { "message_contains": "Incomplete" },
+        { "message_contains": "Bell character" }
+      ]
+    },
+    {
+      "name": "Internationalization and Unicode",
+      "description": "Logs with non-ASCII characters, emojis, right-to-left scripts, and mixed languages.",
+      "lines": [
+        "2024-06-01 12:00:00 INFO User café visited from 北京",
+        "2024-06-01 12:01:00 WARN 🚨 System alert: CPU usage high 🔥",
+        "2024-06-01 12:02:00 ERROR خطأ في النظام: فشل الاتصال",
+        "2024-06-01 12:03:00 INFO ユーザーがログインしました: 田中太郎",
+        "2024-06-01 12:04:00 DEBUG Mixed: café + 北京 + 🚨 + خطأ + ユーザー",
+        "{\"timestamp\":\"2024-06-01T12:05:00Z\",\"level\":\"INFO\",\"message\":\"Unicode JSON: café 🚨 北京 خطأ ユーザー\"}"
+      ],
+      "expect": [
+        { "level": "INFO", "message_contains": "café" },
+        { "level": "WARN", "message_contains": "🚨" },
+        { "level": "ERROR", "message_contains": "خطأ" },
+        { "level": "INFO", "message_contains": "ユーザー" },
+        { "level": "DEBUG", "message_contains": "Mixed" },
+        { "level": "INFO", "message_contains": "Unicode JSON" }
+      ]
+    },
+    {
+      "name": "Timestamp and Level Oddities",
+      "description": "Logs with missing timestamps, duplicate timestamps, out-of-order timestamps, unknown log levels, and lowercase/strange log levels.",
+      "lines": [
+        "INFO Started system with no timestamp",
+        "2024-06-01 12:00:00 INFO Normal entry",
+        "2024-06-01 12:00:00 INFO Duplicate timestamp",
+        "2024-06-01 11:59:59 WARN Out-of-order timestamp",
+        "2024-06-01 12:01:00 UNKNOWN Something weird happened",
+        "2024-06-01 12:02:00 info lowercase level",
+        "2024-06-01 12:03:00 CRIT Critical error occurred",
+        "2024-06-01 12:04:00 fatal System halted"
+      ],
+      "expect": [
+        { "message_contains": "no timestamp" },
+        { "level": "INFO", "message_contains": "Normal entry" },
+        { "level": "INFO", "message_contains": "Duplicate timestamp" },
+        { "level": "WARN", "message_contains": "Out-of-order" },
+        { "message_contains": "UNKNOWN" },
+        { "level": "INFO", "message_contains": "lowercase" },
+        { "level": "FATAL", "message_contains": "Critical error" },
+        { "level": "FATAL", "message_contains": "System halted" }
+      ]
+    },
+    {
+      "name": "Multi-line and Stack Trace Variants",
+      "description": "Logs with stack traces (unusual indentation, missing headers), and multi-line logs with embedded JSON.",
+      "lines": [
+        "2024-06-01 12:00:00 ERROR Exception in thread main",
+        "    at com.example.Main.main(Main.java:14)",
+        "    at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)",
+        "    at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)",
+        "Caused by: java.lang.NullPointerException",
+        "    at com.example.Helper.help(Helper.java:8)",
+        "2024-06-01 12:01:00 ERROR Another error",
+        "{\"timestamp\":\"2024-06-01T12:01:01Z\",\"level\":\"ERROR\",\"message\":\"Embedded JSON error\"}",
+        "2024-06-01 12:02:00 INFO Start of multi-line log",
+        "Continued message part 1",
+        "Continued message part 2"
+      ],
+      "expect": [
+        { "level": "ERROR", "message_contains": "Exception in thread main" },
+        { "message_contains": "at com.example.Main.main" },
+        { "message_contains": "at sun.reflect.NativeMethodAccessorImpl.invoke0" },
+        { "message_contains": "at sun.reflect.NativeMethodAccessorImpl.invoke" },
+        { "message_contains": "Caused by: java.lang.NullPointerException" },
+        { "message_contains": "at com.example.Helper.help" },
+        { "level": "ERROR", "message_contains": "Another error" },
+        { "level": "ERROR", "message_contains": "Embedded JSON error" },
+        { "level": "INFO", "message_contains": "multi-line log" },
+        { "message_contains": "Continued message part 1" }
+      ]
+    },
+    {
+      "name": "Real-World Ugly Logs",
+      "description": "Logs with ANSI color codes, shell escape sequences, and control characters.",
+      "lines": [
+        "\u001b[31m2024-06-01 12:00:00 ERROR Red colored error\u001b[0m",
+        "2024-06-01 12:01:00 INFO Normal log entry",
+        "2024-06-01 12:02:00 WARN \u001b[33mYellow warning\u001b[0m",
+        "2024-06-01 12:03:00 INFO Log with shell escape: $(rm -rf /)",
+        "2024-06-01 12:04:00 INFO Control char: \u0001\u0002\u0003",
+        "2024-06-01 12:05:00 DEBUG \u001b[32mGreen debug\u001b[0m"
+      ],
+      "expect": [
+        { "level": "ERROR", "message_contains": "Red colored error" },
+        { "level": "INFO", "message_contains": "Normal log entry" },
+        { "level": "WARN", "message_contains": "Yellow warning" },
+        { "level": "INFO", "message_contains": "shell escape" },
+        { "message_contains": "Control char" },
+        { "level": "DEBUG", "message_contains": "Green debug" }
+      ]
+    },
+    {
+      "name": "Large Log File",
+      "description": "Large log file with 10000 lines",
+      "lines": [
+        "2024-06-01 12:00:00 INFO Line 1",
+        "2024-06-01 12:00:01 INFO Line 2",
+        "2024-06-01 12:00:02 INFO Line 3",
+        "2024-06-01 12:00:03 INFO Line 4",
+        "2024-06-01 12:00:04 INFO Line 5",
+        "2024-06-01 12:00:05 INFO Line 6",
+        "2024-06-01 12:00:06 INFO Line 7",
+        "2024-06-01 12:00:07 INFO Line 8",
+        "2024-06-01 12:00:08 INFO Line 9",  
+        "2024-06-01 12:00:09 INFO Line 10"
+      ],
+      "expect": [
+        { "level": "INFO", "message_contains": "Line 1" },
+        { "level": "INFO", "message_contains": "Line 2" },
+        { "level": "INFO", "message_contains": "Line 3" },
+        { "level": "INFO", "message_contains": "Line 4" },
+        { "level": "INFO", "message_contains": "Line 5" },
+        { "level": "INFO", "message_contains": "Line 6" },
+        { "level": "INFO", "message_contains": "Line 7" },
+        { "level": "INFO", "message_contains": "Line 8" },
+        { "level": "INFO", "message_contains": "Line 9" },
+        { "level": "INFO", "message_contains": "Line 10" }
+      ]
+    }
+  ],
+  "microservice_test_cases": [
+    {
+      "name": "Simple syslog",
+      "description": "Basic syslog format test for microservice",
+      "content": "2024-06-01 12:00:00 INFO System startup completed\n2024-06-01 12:01:00 ERROR Disk full\n2024-06-01 12:02:00 WARN High memory usage: 85%",
+      "expected_fields": [
+        "timestamp",
+        "level",
+        "message"
+      ]
+    },
+    {
+      "name": "Apache access log",
+      "description": "Apache access log test for microservice",
+      "content": "127.0.0.1 - - [01/Jun/2024:12:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 2326\n127.0.0.1 - - [01/Jun/2024:12:01:00 +0000] \"POST /login HTTP/1.1\" 401 512\n127.0.0.1 - - [01/Jun/2024:12:02:00 +0000] \"GET /api/data HTTP/1.1\" 500 890",
+      "expected_fields": [
+        "message",
+        "metadata"
+      ]
+    },
+    {
+      "name": "JSON logs",
+      "description": "JSON logs test for microservice",
+      "content": "{\"timestamp\":\"2024-06-01T12:00:00Z\",\"level\":\"INFO\",\"message\":\"System started\",\"user\":\"admin\"}\n{\"timestamp\":\"2024-06-01T12:01:00Z\",\"level\":\"WARN\",\"message\":\"High memory usage\",\"memory_percent\":85}\n{\"timestamp\":\"2024-06-01T12:02:00Z\",\"level\":\"ERROR\",\"message\":\"Database error\",\"error_code\":\"DB001\"}",
+      "expected_fields": [
+        "timestamp",
+        "level",
+        "message",
+        "metadata"
+      ]
+    },
+    {
+      "name": "Docker logs",
+      "description": "Docker container logs test for microservice",
+      "content": "2024-06-01T12:00:00.123Z container1 INFO Container started successfully\n2024-06-01T12:01:00.456Z container2 WARN High CPU usage: 90%\n2024-06-01T12:02:00.789Z container3 ERROR Out of memory exception",
+      "expected_fields": [
+        "timestamp",
+        "level",
+        "message"
+      ]
+    },
+    {
+      "name": "Unstructured error logs",
+      "description": "Unstructured error logs test for microservice",
+      "content": "Something went wrong at 12:00:00!\nCritical failure in module X\nDatabase connection timeout\nStack trace: java.lang.Exception: Connection failed",
+      "expected_fields": [
+        "message"
+      ]
+    },
+    {
+      "name": "Mixed content (JSON + unstructured)",
+      "description": "Mixed content test for microservice",
+      "content": "{\"timestamp\":\"2024-06-01T12:00:00Z\",\"level\":\"INFO\",\"message\":\"JSON entry\"}\n2024-06-01 12:00:01 ERROR Unstructured entry\n{\"timestamp\":\"2024-06-01T12:00:02Z\",\"level\":\"WARN\",\"message\":\"Another JSON\"}\n2024-06-01 12:00:03 INFO Another unstructured",
+      "expected_fields": [
+        "timestamp",
+        "level",
+        "message"
+      ]
+    }
+  ],
+  "real_world_scenarios": [
+    {
+      "name": "Web Application Logs",
+      "description": "Typical web application logs with user actions, errors, and performance metrics",
+      "lines": [
+        "2024-06-01 12:00:00 INFO [UserService] User login successful: user_id=12345, ip=192.168.1.100",
+        "2024-06-01 12:00:01 INFO [OrderService] Order created: order_id=67890, user_id=12345, amount=299.99",
+        "2024-06-01 12:00:02 WARN [PaymentService] Payment processing slow: order_id=67890, duration=5.2s",
+        "2024-06-01 12:00:03 ERROR [DatabaseService] Connection timeout: retry_attempt=3, error_code=DB_TIMEOUT",
+        "2024-06-01 12:00:04 INFO [EmailService] Order confirmation sent: order_id=67890, email=user@example.com"
+      ]
+    },
+    {
+      "name": "Microservices Communication",
+      "description": "Logs from microservices communicating with each other",
+      "lines": [
+        "2024-06-01 12:00:00 INFO [API-Gateway] Request received: method=POST, path=/api/orders, client_ip=10.0.0.1",
+        "2024-06-01 12:00:01 INFO [Auth-Service] Token validated: user_id=12345, permissions=[read,write]",
+        "2024-06-01 12:00:02 INFO [Order-Service] Order validation passed: order_id=67890",
+        "2024-06-01 12:00:03 INFO [Inventory-Service] Stock check completed: product_id=ABC123, available=true",
+        "2024-06-01 12:00:04 ERROR [Payment-Service] Payment gateway timeout: order_id=67890, provider=stripe"
+      ]
+    },
+    {
+      "name": "System Administration",
+      "description": "System administration and monitoring logs",
+      "lines": [
+        "2024-06-01 12:00:00 INFO [SystemMonitor] CPU usage: 45%, Memory: 67%, Disk: 23%",
+        "2024-06-01 12:00:01 WARN [BackupService] Backup job running longer than expected: duration=45m, expected=30m",
+        "2024-06-01 12:00:02 INFO [SecurityScanner] Vulnerability scan completed: issues_found=2, severity=medium",
+        "2024-06-01 12:00:03 ERROR [NetworkMonitor] High latency detected: avg_latency=150ms, threshold=100ms",
+        "2024-06-01 12:00:04 INFO [UpdateService] System update available: version=2.1.0, security_patches=3"
+      ]
+    }
+  ]
+}

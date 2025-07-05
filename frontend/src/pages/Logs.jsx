@@ -120,14 +120,36 @@ const Logs = () => {
           }
         },
       });
-      
       setMessage('Log file uploaded successfully! Processing in background...');
       setSelectedFile(null);
       setUploadProgress(0);
       document.getElementById('file-input').value = '';
-      
-      // Refresh log files list
-      fetchLogFiles();
+
+      // Find the uploaded log file (by filename, most recent)
+      let uploadedLogFile = null;
+      let pollInterval = null;
+      const pollLogFileStatus = async () => {
+        await fetchLogFiles();
+        // Try to find the uploaded file by filename
+        const latestLogFiles = await api.get('/logs');
+        const files = latestLogFiles.data.logFiles || [];
+        uploadedLogFile = files.find(f => f.filename === selectedFile?.name) || files[0];
+        if (uploadedLogFile) {
+          if (uploadedLogFile.status === 'completed') {
+            setMessage('Log file parsed successfully!');
+            clearInterval(pollInterval);
+          } else if (uploadedLogFile.status === 'failed') {
+            setMessage('Log file parsing failed.');
+            clearInterval(pollInterval);
+          } else {
+            setMessage('Log file is being parsed...');
+          }
+        }
+      };
+      // Start polling every 2 seconds
+      pollInterval = setInterval(pollLogFileStatus, 2000);
+      // Run once immediately
+      pollLogFileStatus();
     } catch (error) {
       setMessage('Upload failed: ' + error.message);
       setUploadProgress(0);

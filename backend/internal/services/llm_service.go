@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +15,7 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/autolog/backend/internal/logger"
 	"github.com/autolog/backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -105,32 +104,25 @@ type LLMAPICall struct {
 	Error     string                 `json:"error,omitempty"`
 }
 
-func NewLLMService(ollamaURL, llmModel string) *LLMService {
-	if ollamaURL == "" {
-		ollamaURL = "http://localhost:11434"
+func NewLLMService(baseURL, llmModel string) *LLMService {
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
 	}
 	if llmModel == "" {
-		llmModel = "llama2:13b"
-	}
-	embedModel := os.Getenv("OLLAMA_EMBED_MODEL")
-	if embedModel == "" {
-		embedModel = "nomic-embed-text"
+		llmModel = "llama2"
 	}
 
-	// Get timeout from environment or use default
-	timeoutStr := os.Getenv("OLLAMA_TIMEOUT_SECONDS")
-	timeout := 300 * time.Second // Default 5 minutes
-	if timeoutStr != "" {
-		if t, err := time.ParseDuration(timeoutStr + "s"); err == nil {
-			timeout = t
-		}
-	}
+	logger.Info("LLMService initialized", map[string]interface{}{
+		"base_url":  baseURL,
+		"llm_model": llmModel,
+		"component": "llm_service",
+	})
 
 	return &LLMService{
-		baseURL:    ollamaURL,
+		baseURL:    baseURL,
 		llmModel:   llmModel,
-		embedModel: embedModel,
-		client:     &http.Client{Timeout: timeout},
+		embedModel: "llama2",
+		client:     &http.Client{Timeout: 300 * time.Second},
 		apiCalls:   make([]LLMAPICall, 0),
 	}
 }
@@ -193,16 +185,27 @@ func (ls *LLMService) TrackAPICall(logFileID *uint, jobID *uint, callType string
 
 // AnalyzeLogsWithAI performs AI-powered analysis of log entries with focus on errors
 func (ls *LLMService) AnalyzeLogsWithAI(logFile *models.LogFile, entries []models.LogEntry, jobID *uint) (*LogAnalysisResponse, error) {
+	logEntry := logger.WithLLM(&logFile.ID, jobID, "rca_analysis")
+
 	if logFile == nil {
+		logEntry.Error("LogFile is nil")
 		return nil, fmt.Errorf("logFile is nil")
 	}
 
 	// Filter only ERROR and FATAL entries for analysis
 	errorEntries := ls.filterErrorEntries(entries)
 	if len(errorEntries) == 0 {
+		logEntry.Info("No error entries found, returning basic analysis")
 		// No errors found, return basic analysis
 		return ls.generateNoErrorsAnalysis(logFile), nil
 	}
+
+	logEntry.Info("Starting AI analysis", map[string]interface{}{
+		"total_entries": len(entries),
+		"error_entries": len(errorEntries),
+		"log_file_id":   logFile.ID,
+		"filename":      logFile.Filename,
+	})
 
 	// Prepare the analysis request
 	request := LogAnalysisRequest{
@@ -220,41 +223,68 @@ func (ls *LLMService) AnalyzeLogsWithAI(logFile *models.LogFile, entries []model
 	// Create the prompt for the LLM
 	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, "") // Pass an empty string for similarIncidents for now
 
+	logEntry.Debug("Generated analysis prompt", map[string]interface{}{
+		"prompt_length": len(prompt),
+	})
+
 	// Call the local LLM
 	response, err := ls.callLLMWithContext(prompt, &logFile.ID, jobID, "rca_analysis")
 	if err != nil {
-		log.Printf("LLM analysis failed: %v", err)
+		logger.WithError(err, "llm_service").Error("LLM analysis failed")
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
+
+	logEntry.Debug("Received LLM response", map[string]interface{}{
+		"response_length": len(response),
+	})
 
 	// Parse the LLM response
 	analysis, err := ls.parseDetailedLLMResponse(response)
 	if err != nil {
-		log.Printf("Failed to parse LLM response: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to parse LLM response")
 		return nil, fmt.Errorf("Failed to parse LLM response: %w", err)
 	}
 
 	// Validate analysis (must have summary and root cause)
 	if analysis.Summary == "" || analysis.RootCause == "" {
+		logEntry.Error("LLM returned incomplete analysis", map[string]interface{}{
+			"has_summary":    analysis.Summary != "",
+			"has_root_cause": analysis.RootCause != "",
+		})
 		return nil, fmt.Errorf("LLM returned incomplete analysis (missing summary or root cause)")
 	}
+
+	logEntry.Info("AI analysis completed successfully", map[string]interface{}{
+		"severity":          analysis.Severity,
+		"summary_length":    len(analysis.Summary),
+		"root_cause_length": len(analysis.RootCause),
+	})
 
 	return analysis, nil
 }
 
 // AnalyzeLogsWithAIWithTimeout performs AI-powered analysis of log entries with focus on errors, with a per-request timeout.
 func (ls *LLMService) AnalyzeLogsWithAIWithTimeout(logFile *models.LogFile, entries []models.LogEntry, timeout int, jobID *uint) (*LogAnalysisResponse, error) {
+	logEntry := logger.WithLLM(&logFile.ID, jobID, "rca_analysis_timeout")
+
 	if logFile == nil {
+		logEntry.Error("LogFile is nil")
 		return nil, fmt.Errorf("logFile is nil")
 	}
 	// Filter only ERROR and FATAL entries for analysis
 	errorEntries := ls.filterErrorEntries(entries)
 	if len(errorEntries) == 0 {
-		log.Printf("[LLM] No ERROR/FATAL entries found in chunk (%d total entries), using fallback analysis", len(entries))
+		logEntry.Info("No ERROR/FATAL entries found in chunk, using fallback analysis", map[string]interface{}{
+			"total_entries": len(entries),
+		})
 		return ls.generateNoErrorsAnalysis(logFile), nil
 	}
 
-	log.Printf("[LLM] Found %d ERROR/FATAL entries in chunk (%d total entries), proceeding with LLM analysis", len(errorEntries), len(entries))
+	logEntry.Info("Found ERROR/FATAL entries in chunk, proceeding with LLM analysis", map[string]interface{}{
+		"error_entries": len(errorEntries),
+		"total_entries": len(entries),
+		"timeout":       timeout,
+	})
 
 	request := LogAnalysisRequest{
 		LogEntries:   errorEntries,
@@ -269,15 +299,16 @@ func (ls *LLMService) AnalyzeLogsWithAIWithTimeout(logFile *models.LogFile, entr
 	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, "")
 	response, err := ls.callLLMWithContextAndTimeout(prompt, &logFile.ID, jobID, "rca_analysis", timeout)
 	if err != nil {
-		log.Printf("LLM analysis failed: %v", err)
+		logger.WithError(err, "llm_service").Error("LLM analysis failed")
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
 	analysis, err := ls.parseDetailedLLMResponse(response)
 	if err != nil {
-		log.Printf("Failed to parse LLM response: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to parse LLM response")
 		return nil, fmt.Errorf("Failed to parse LLM response: %w", err)
 	}
 	if analysis.Summary == "" || analysis.RootCause == "" {
+		logEntry.Error("LLM returned incomplete analysis")
 		return nil, fmt.Errorf("LLM returned incomplete analysis (missing summary or root cause)")
 	}
 	return analysis, nil
@@ -443,12 +474,17 @@ func (ls *LLMService) callLLM(prompt string) (string, error) {
 
 	jsonData, err := json.Marshal(request)
 	if err != nil {
+		logger.WithError(err, "llm_service").Error("Failed to marshal LLM request")
 		ls.TrackAPICall(nil, nil, "general", map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
-	log.Printf("Making LLM request to %s with prompt length: %d characters", url, len(prompt))
+	logger.Debug("Making LLM request", map[string]interface{}{
+		"url":           url,
+		"prompt_length": len(prompt),
+		"model":         ls.llmModel,
+	})
 
 	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt)}
 
@@ -456,29 +492,38 @@ func (ls *LLMService) callLLM(prompt string) (string, error) {
 	elapsed := time.Since(startTime)
 
 	if err != nil {
-		log.Printf("LLM request failed after %v: %v", elapsed, err)
+		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
+			"elapsed": elapsed,
+		})
 		ls.TrackAPICall(nil, nil, "general", payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("LLM request completed in %v with status: %d", elapsed, resp.StatusCode)
+	logger.Debug("LLM request completed", map[string]interface{}{
+		"elapsed":     elapsed,
+		"status_code": resp.StatusCode,
+	})
 
 	if resp.StatusCode != http.StatusOK {
-		// Read and log the response body for diagnostics
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
-		log.Printf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
 		ls.TrackAPICall(nil, nil, "general", payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		log.Printf("Failed to decode Ollama response: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
 		ls.TrackAPICall(nil, nil, "general", payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
+
+	logger.Debug("LLM response decoded successfully", map[string]interface{}{
+		"response_length": len(ollamaResp.Response),
+		"model":           ollamaResp.Model,
+	})
 
 	ls.TrackAPICall(nil, nil, "general", payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
@@ -506,7 +551,12 @@ func (ls *LLMService) callLLMWithContext(prompt string, logFileID *uint, jobID *
 	}
 
 	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
-	log.Printf("Making LLM request to %s with prompt length: %d characters (context: %s)", url, len(prompt), callType)
+	logger.Debug("Making LLM request", map[string]interface{}{
+		"url":           url,
+		"prompt_length": len(prompt),
+		"model":         ls.llmModel,
+		"call_type":     callType,
+	})
 
 	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt)}
 
@@ -514,28 +564,38 @@ func (ls *LLMService) callLLMWithContext(prompt string, logFileID *uint, jobID *
 	elapsed := time.Since(startTime)
 
 	if err != nil {
-		log.Printf("LLM request failed after %v: %v", elapsed, err)
+		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
+			"elapsed": elapsed,
+		})
 		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("LLM request completed in %v with status: %d", elapsed, resp.StatusCode)
+	logger.Debug("LLM request completed", map[string]interface{}{
+		"elapsed":     elapsed,
+		"status_code": resp.StatusCode,
+	})
 
 	if resp.StatusCode != http.StatusOK {
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
-		log.Printf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
 		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		log.Printf("Failed to decode Ollama response: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
 		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
+
+	logger.Debug("LLM response decoded successfully", map[string]interface{}{
+		"response_length": len(ollamaResp.Response),
+		"model":           ollamaResp.Model,
+	})
 
 	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
@@ -563,7 +623,13 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 	}
 
 	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
-	log.Printf("Making LLM request to %s with prompt length: %d characters (context: %s, timeout: %ds)", url, len(prompt), callType, timeout)
+	logger.Debug("Making LLM request", map[string]interface{}{
+		"url":           url,
+		"prompt_length": len(prompt),
+		"model":         ls.llmModel,
+		"call_type":     callType,
+		"timeout":       timeout,
+	})
 
 	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt), "timeout": timeout}
 
@@ -583,28 +649,38 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 	elapsed := time.Since(startTime)
 
 	if err != nil {
-		log.Printf("LLM request failed after %v: %v", elapsed, err)
+		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
+			"elapsed": elapsed,
+		})
 		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("LLM request completed in %v with status: %d", elapsed, resp.StatusCode)
+	logger.Debug("LLM request completed", map[string]interface{}{
+		"elapsed":     elapsed,
+		"status_code": resp.StatusCode,
+	})
 
 	if resp.StatusCode != http.StatusOK {
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
-		log.Printf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
 		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		log.Printf("Failed to decode Ollama response: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
 		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
+
+	logger.Debug("LLM response decoded successfully", map[string]interface{}{
+		"response_length": len(ollamaResp.Response),
+		"model":           ollamaResp.Model,
+	})
 
 	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
@@ -639,7 +715,12 @@ func (ls *LLMService) callLLMWithTimeout(prompt string, timeout int) (string, er
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
-	log.Printf("Making LLM request to %s with prompt length: %d characters (timeout: %ds)", url, len(prompt), timeout)
+	logger.Debug("Making LLM request", map[string]interface{}{
+		"url":           url,
+		"prompt_length": len(prompt),
+		"model":         ls.llmModel,
+		"timeout":       timeout,
+	})
 	client := ls.client
 	if timeout > 0 {
 		client = &http.Client{Timeout: time.Duration(timeout) * time.Second}
@@ -658,27 +739,32 @@ func (ls *LLMService) callLLMWithTimeout(prompt string, timeout int) (string, er
 	elapsed := time.Since(startTime)
 
 	if err != nil {
-		log.Printf("LLM request failed after %v: %v", elapsed, err)
+		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
+			"elapsed": elapsed,
+		})
 		apiCall.Status = 0
 		apiCall.Error = fmt.Sprintf("HTTP request failed: %v", err)
 		ls.addAPICall(apiCall)
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	log.Printf("LLM request completed in %v with status: %d", elapsed, resp.StatusCode)
+	logger.Debug("LLM request completed", map[string]interface{}{
+		"elapsed":     elapsed,
+		"status_code": resp.StatusCode,
+	})
 	apiCall.Status = resp.StatusCode
 
 	if resp.StatusCode != http.StatusOK {
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
-		log.Printf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
 		apiCall.Error = fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 		ls.addAPICall(apiCall)
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		log.Printf("Failed to decode Ollama response: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
 		apiCall.Error = fmt.Sprintf("failed to decode Ollama response: %v", err)
 		ls.addAPICall(apiCall)
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
@@ -708,25 +794,25 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 
 	// Defensive: Check if the response looks like JSON
 	if !strings.HasPrefix(cleanResponse, "{") && !strings.HasPrefix(cleanResponse, "[") {
-		log.Printf("LLM returned non-JSON response: %q", cleanResponse)
+		logger.WithError(fmt.Errorf("LLM returned non-JSON response: %q", cleanResponse), "llm_service").Error("LLM did not return valid JSON")
 		return nil, fmt.Errorf("LLM did not return valid JSON. Raw response: %q", cleanResponse)
 	}
 
 	// Try to parse the JSON as-is first
 	var analysis LogAnalysisResponse
 	if err := json.Unmarshal([]byte(cleanResponse), &analysis); err != nil {
-		log.Printf("Failed to parse JSON from LLM, attempting to fix common issues: %v", err)
+		logger.WithError(err, "llm_service").Error("Failed to parse JSON from LLM, attempting to fix common issues")
 
 		// Try to fix common JSON syntax errors
 		fixedResponse := ls.attemptToFixJSON(cleanResponse)
 		if fixedResponse != cleanResponse {
-			log.Printf("Attempting to parse fixed JSON")
+			logger.Debug("Attempting to parse fixed JSON", nil)
 			if err := json.Unmarshal([]byte(fixedResponse), &analysis); err != nil {
-				log.Printf("Failed to parse fixed JSON from LLM: %q", fixedResponse)
+				logger.WithError(err, "llm_service").Error("Failed to parse fixed JSON from LLM")
 				return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
 			}
 		} else {
-			log.Printf("Failed to parse JSON from LLM: %q", cleanResponse)
+			logger.WithError(err, "llm_service").Error("Failed to parse JSON from LLM")
 			return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
 		}
 	}
@@ -1002,10 +1088,12 @@ Log lines to analyze:
 %s
 
 Format string:`, strings.Join(samples, "\n"))
-	log.Println("Prompt:", prompt)
+	logger.Debug("Prompting LLM for log format inference", map[string]interface{}{
+		"prompt_length": len(prompt),
+	})
 	resp, err := ls.callLLMWithContext(prompt, logFileID, nil, "format_inference")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("LLM format inference failed: %w", err)
 	}
 
 	// Clean the response - remove any explanatory text
@@ -1042,8 +1130,13 @@ Format string:`, strings.Join(samples, "\n"))
 
 	// Validate that it looks like a format string (contains angle brackets)
 	if !strings.Contains(resp, "<") || !strings.Contains(resp, ">") {
+		logger.WithError(fmt.Errorf("LLM did not return a valid format string: %q", resp), "llm_service").Error("LLM did not return a valid format string")
 		return "", fmt.Errorf("LLM did not return a valid format string: %q", resp)
 	}
+
+	logger.Debug("LLM returned valid format string", map[string]interface{}{
+		"format_string": resp,
+	})
 
 	return resp, nil
 }

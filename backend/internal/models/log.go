@@ -9,9 +9,59 @@ import (
 	"gorm.io/gorm"
 )
 
-// JSONB is a custom type for handling JSONB columns in GORM
-// It implements the Scanner and Valuer interfaces
-// so GORM can marshal/unmarshal JSON automatically
+// Canonical LogEntry JSON schema for log parsing and validation:
+//
+//	{
+//	  "timestamp": string (RFC3339 or similar, required),
+//	  "service": string (required),
+//	  "host": string (optional),
+//	  "environment": string (optional),
+//	  "level": string (DEBUG|INFO|WARN|ERROR|FATAL, required),
+//	  "error_code": string (optional),
+//	  "message": string (required),
+//	  "exception": {
+//	    "type": string (optional),
+//	    "stack_trace": [string] (optional)
+//	  },
+//	  "context": {
+//	    "transaction_id": string (optional),
+//	    "user_id": string (optional),
+//	    "request": {
+//	      "method": string (optional),
+//	      "url": string (optional),
+//	      "ip": string (optional)
+//	    },
+//	    "custom_fields": {
+//	      "retry_attempt": int (optional),
+//	      "database_name": string (optional)
+//	    }
+//	  },
+//	  "tags": [string] (optional),
+//	  "correlation_id": string (optional),
+//	  "metadata": object (arbitrary JSON, optional)
+//	}
+//
+// Example:
+//
+//	{
+//	  "timestamp": "2024-06-01T12:34:56Z",
+//	  "service": "auth-service",
+//	  "host": "server-1",
+//	  "environment": "production",
+//	  "level": "ERROR",
+//	  "error_code": "E401",
+//	  "message": "Failed to authenticate user",
+//	  "exception": { "type": "AuthError", "stack_trace": ["...stack..."] },
+//	  "context": {
+//	    "transaction_id": "abc123",
+//	    "user_id": "user42",
+//	    "request": { "method": "POST", "url": "/login", "ip": "1.2.3.4" },
+//	    "custom_fields": { "retry_attempt": 1, "database_name": "users" }
+//	  },
+//	  "tags": ["auth", "login"],
+//	  "correlation_id": "corr-xyz",
+//	  "metadata": { "extra": "value" }
+//	}
 type JSONB map[string]interface{}
 
 func (j *JSONB) Scan(value interface{}) error {
@@ -107,6 +157,9 @@ type LogFile struct {
 	// Relationships
 	Entries        []LogEntry `json:"entries,omitempty" gorm:"foreignKey:LogFileID"`
 	RCAAnalysisJob *Job       `json:"rcaAnalysisJob,omitempty" gorm:"-"` // No DB-level FK constraint
+
+	// ParseError stores error details if log parsing fails
+	ParseError string `json:"parse_error,omitempty" gorm:"type:text"`
 }
 
 type LogAnalysis struct {

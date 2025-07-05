@@ -9,6 +9,7 @@ function Layout() {
   const navigation = [
     { name: 'Dashboard', href: '/', icon: '📊' },
     { name: 'Log Analysis', href: '/logs', icon: '🔍' },
+    { name: 'Parsing Rules', href: '/parsing-rules', icon: '⚙️' },
     { name: 'LLM Status', href: '/llm-status', icon: '🤖' },
     { name: 'Users', href: '/users', icon: '👥' },
   ]
@@ -26,8 +27,8 @@ function Layout() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
               <img
-                className="h-8 w-auto mr-3"
-                src="https://i.ibb.co/KzhHzVrM/autolog.png"
+                className="h-9 w-auto mr-3"
+                src="/autolog.svg"
                 alt="AutoLog Logo"
               />
               <h1 className="text-xl font-semibold text-gray-900">

@@ -6,6 +6,8 @@ An advanced log analysis platform using LLM for Root Cause Analysis (RCA) and mu
 
 - **Multi-Source Log Integration**: Connect to CloudWatch, Splunk, and other log sources
 - **LLM-Powered Analysis**: Advanced log analysis using Large Language Models
+- **Enhanced ML Log Parsing**: Intelligent log parsing using 14+ ML algorithms (Drain, Spell, IPLoM, LogCluster, etc.)
+- **Universal Log Support**: Parse JSON, structured, unstructured, and mixed log formats
 - **Root Cause Analysis (RCA)**: Automated generation of comprehensive RCA reports
 - **Real-time Log Processing**: Live log ingestion and analysis
 - **Intelligent Insights**: AI-driven pattern recognition and anomaly detection
@@ -17,6 +19,7 @@ An advanced log analysis platform using LLM for Root Cause Analysis (RCA) and mu
 
 - **Frontend**: React 18 + JavaScript + Vite (with live reload)
 - **Backend**: Go + Gin + GORM (normal build)
+- **Logparser Microservice**: Python + FastAPI + ML algorithms (port 8001)
 - **Database**: PostgreSQL
 - **Real-time**: WebSocket support
 - **Authentication**: JWT-based authentication
@@ -32,6 +35,11 @@ autolog/
 │   ├── internal/     # Private application code
 │   ├── pkg/          # Public libraries
 │   └── migrations/   # Database migrations
+├── logparser_service/ # Python ML logparser microservice
+│   ├── enhanced_ml_parser.py  # Enhanced ML parser with 14 algorithms
+│   ├── main.py               # FastAPI microservice
+│   ├── test_all.py           # Comprehensive test suite
+│   └── requirements.txt      # Python dependencies
 ├── shared/            # Shared types and utilities
 ├── prd/              # Product Requirements Document
 └── docs/             # Project documentation
@@ -43,6 +51,7 @@ autolog/
 
 - Go 1.24+
 - Node.js 18+ 
+- Python 3.10+
 - PostgreSQL 14+
 - npm or yarn
 
@@ -59,14 +68,21 @@ autolog/
    npm run install:all
    ```
 
-3. **Environment Setup**
+3. **Install logparser microservice dependencies**
+   ```bash
+   cd logparser_service
+   pip install -r requirements.txt
+   cd ..
+   ```
+
+4. **Environment Setup**
    ```bash
    # Copy environment files
    cp backend/.env.example backend/.env
    cp frontend/.env.example frontend/.env
    ```
 
-4. **Start Development Environment**
+5. **Start Development Environment**
    ```bash
    # Using Docker (recommended)
    make docker-dev
@@ -79,8 +95,8 @@ autolog/
 
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:8080
+- **Logparser Microservice**: http://localhost:8001
 - **Database**: PostgreSQL on localhost:5432
-- **Adminer**: http://localhost:8081 (Database management)
 
 ## 🔐 Default Login Credentials
 
@@ -91,18 +107,71 @@ The application comes with pre-configured users for testing:
 - **Responder**: `responder@autolog.com` / `responder123`
 - **Viewer**: `viewer@autolog.com` / `viewer123`
 
+## 🧠 Enhanced ML Log Parser
+
+The logparser microservice provides intelligent log parsing using 14+ machine learning algorithms:
+
+### **Available ML Algorithms:**
+- **Drain**: Hierarchical clustering for structured logs
+- **Spell**: Spell-based log parsing for duplicate detection
+- **IPLoM**: Iterative partitioning for log mining
+- **LogCluster**: Clustering-based log parsing
+- **LenMa**: Length-based log parsing
+- **LFA**: Log format analyzer
+- **LKE**: Log key extraction
+- **LogMine**: Multi-level log parsing
+- **LogSig**: Signature-based log parsing
+- **Logram**: N-gram based log parsing
+- **SLCT**: Simple log clustering toolkit
+- **ULP**: Unsupervised log parsing
+- **Brain**: Neural network-based parsing
+- **AEL**: Automated event log parsing
+
+### **Supported Log Types:**
+- **JSON Logs**: Structured JSON with automatic field extraction
+- **Structured Logs**: Syslog, application logs, system logs
+- **Web Server Logs**: Apache, Nginx access logs
+- **Container Logs**: Docker, Kubernetes logs
+- **Security Logs**: Authentication, authorization events
+- **Mixed Content**: Hybrid JSON and unstructured logs
+- **Unstructured Logs**: Free-form text with intelligent parsing
+
+### **Features:**
+- **Intelligent Algorithm Selection**: Automatically chooses the best ML algorithm based on log characteristics
+- **Field Extraction**: Extracts timestamps, log levels, IP addresses, HTTP fields, and more
+- **High Performance**: Processes 7,000+ entries per second
+- **Robust Fallback**: Multiple fallback mechanisms for edge cases
+- **Comprehensive Testing**: Full test suite with real-world scenarios
+
+### **Testing the Logparser:**
+
+```bash
+# Run all tests
+cd logparser_service
+python3 test_all.py
+
+# Test specific components
+python3 test_all.py --ml          # Test ML parser functionality
+python3 test_all.py --microservice # Test microservice API
+python3 test_all.py --real-world  # Test real-world scenarios
+python3 test_all.py --performance # Test performance with large datasets
+
+# Test microservice health
+curl http://localhost:8001/health
+```
+
 ## 🏥 Health Checks & Startup Order
 
 The application uses Docker's native health checks to ensure proper startup order:
 
 1. **Database** starts first with PostgreSQL health checks
-2. **Backend** waits for database to be healthy, then starts with health endpoint
-3. **Frontend** waits for backend to be healthy before starting
+2. **Logparser Microservice** starts with health endpoint
+3. **Backend** waits for database and logparser to be healthy, then starts
+4. **Frontend** waits for backend to be healthy before starting
 
-### Health Endpoint
+### Health Endpoints
 
-The backend provides a detailed health endpoint at `http://localhost:8080/health`:
-
+**Backend Health**: `http://localhost:8080/health`
 ```json
 {
   "status": "ok",
@@ -114,6 +183,14 @@ The backend provides a detailed health endpoint at `http://localhost:8080/health
       "error": null
     }
   }
+}
+```
+
+**Logparser Health**: `http://localhost:8001/health`
+```json
+{
+  "status": "healthy",
+  "service": "logparser"
 }
 ```
 
@@ -132,8 +209,6 @@ make health-db
 make health-test
 make health-test-docker
 ```
-
-**Note**: Docker automatically manages the startup order using health checks. If the backend is unhealthy, the frontend container will not start, preventing the `ERR_EMPTY_RESPONSE` error.
 
 ## 🌱 Initial Data Configuration
 
@@ -160,6 +235,7 @@ DATABASE_URL="postgresql://username:password@localhost:5432/autolog"
 JWT_SECRET="your-jwt-secret"
 PORT=8080
 ENV=development
+LOGPARSER_URL="http://localhost:8001"
 ```
 
 #### Frontend (.env)

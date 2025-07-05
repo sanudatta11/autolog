@@ -34,7 +34,7 @@ function Login() {
           <div className="flex justify-center">
             <img
               className="h-16 w-auto"
-              src="https://i.ibb.co/KzhHzVrM/autolog.png"
+              src="/autolog.svg"
               alt="AutoLog Logo"
             />
           </div>

@@ -11,17 +11,21 @@ import (
 )
 
 // SetupRoutes configures all application routes
-func SetupRoutes(r *gin.Engine, db *gorm.DB) {
+func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 	// Initialize services
 	llmService := services.NewLLMService(
 		os.Getenv("OLLAMA_URL"),
 		os.Getenv("OLLAMA_MODEL"),
 	)
 
+	// Initialize services
+	parsingRuleService := services.NewParsingRuleService(db)
+
 	// Initialize controllers
 	authController := controllers.NewAuthController(db)
 	userController := controllers.NewUserController(db)
-	logController := controllers.NewLogController(db, llmService)
+	logController := controllers.NewLogController(db, llmService, stopChan)
+	parsingRuleController := controllers.NewParsingRuleController(parsingRuleService)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -90,6 +94,18 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB) {
 				llm.GET("/status", logController.GetLLMStatus)
 				llm.GET("/api-calls", logController.GetLLMAPICalls)
 				llm.DELETE("/api-calls", logController.ClearLLMAPICalls)
+			}
+
+			// Parsing Rules
+			parsingRules := protected.Group("/parsing-rules")
+			{
+				parsingRules.GET("", parsingRuleController.GetUserParsingRules)
+				parsingRules.POST("", parsingRuleController.CreateParsingRule)
+				parsingRules.GET("/:id", parsingRuleController.GetParsingRule)
+				parsingRules.PUT("/:id", parsingRuleController.UpdateParsingRule)
+				parsingRules.DELETE("/:id", parsingRuleController.DeleteParsingRule)
+				parsingRules.POST("/test", parsingRuleController.TestParsingRule)
+				parsingRules.GET("/active", parsingRuleController.GetActiveParsingRules)
 			}
 		}
 	}

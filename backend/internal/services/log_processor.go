@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/autolog/backend/internal/logger"
 	"github.com/autolog/backend/internal/models"
 
 	"gorm.io/gorm"
@@ -27,6 +28,23 @@ func min(a, b int) int {
 	return b
 }
 
+type lineCategory int
+
+const (
+	validJSON lineCategory = iota
+	fixableJSON
+	unstructured
+)
+
+type lineInfo struct {
+	lineNum      int
+	content      string
+	category     lineCategory
+	fixAttempted bool
+	fixSuccess   bool
+	reason       string
+}
+
 type LogProcessor struct {
 	db           *gorm.DB
 	llmService   *LLMService
@@ -36,8 +54,14 @@ type LogProcessor struct {
 func NewLogProcessor(db *gorm.DB, llmService *LLMService) *LogProcessor {
 	logparserURL := os.Getenv("LOGPARSER_URL")
 	if logparserURL == "" {
-		logparserURL = "http://localhost:8000"
+		logparserURL = "http://localhost:8001"
 	}
+
+	logger.Info("LogProcessor initialized", map[string]interface{}{
+		"logparser_url": logparserURL,
+		"component":     "log_processor",
+	})
+
 	return &LogProcessor{
 		db:           db,
 		llmService:   llmService,
@@ -46,10 +70,20 @@ func NewLogProcessor(db *gorm.DB, llmService *LLMService) *LogProcessor {
 }
 
 // Helper to call logparser microservice with a file and return structured logs
-func (lp *LogProcessor) callLogparserMicroservice(filePath string, logFormat string) ([]models.LogEntry, error) {
+func (lp *LogProcessor) callLogparserMicroservice(filePath string, logFormat string) ([]models.LogEntry, string, error) {
+	logEntry := logger.WithContext(map[string]interface{}{
+		"file_path":  filePath,
+		"log_format": logFormat,
+		"component":  "log_processor",
+		"operation":  "call_logparser_microservice",
+	})
+
+	logEntry.Debug("Starting logparser microservice call")
+
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file for logparser: %w", err)
+		logger.WithError(err, "log_processor").Error("Failed to open file for logparser")
+		return nil, "failed to open file for logparser", fmt.Errorf("failed to open file for logparser: %w", err)
 	}
 	defer file.Close()
 
@@ -57,10 +91,12 @@ func (lp *LogProcessor) callLogparserMicroservice(filePath string, logFormat str
 	w := multipart.NewWriter(&b)
 	fw, err := w.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
+		logger.WithError(err, "log_processor").Error("Failed to create form file")
+		return nil, "failed to create form file", fmt.Errorf("failed to create form file: %w", err)
 	}
 	if _, err := io.Copy(fw, file); err != nil {
-		return nil, fmt.Errorf("failed to copy file: %w", err)
+		logger.WithError(err, "log_processor").Error("Failed to copy file")
+		return nil, "failed to copy file", fmt.Errorf("failed to copy file: %w", err)
 	}
 	// Add log_format if provided
 	if logFormat != "" {
@@ -70,45 +106,67 @@ func (lp *LogProcessor) callLogparserMicroservice(filePath string, logFormat str
 
 	req, err := http.NewRequest("POST", lp.logparserURL+"/parse", &b)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		logger.WithError(err, "log_processor").Error("Failed to create HTTP request")
+		return nil, "failed to create request", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	client := &http.Client{Timeout: 120 * time.Second}
+
+	logEntry.Debug("Sending request to logparser microservice")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("logparser microservice request failed: %w", err)
+		logger.WithError(err, "log_processor").Error("Logparser microservice request failed")
+		return nil, "logparser microservice request failed", fmt.Errorf("logparser microservice request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("logparser microservice returned status %d: %s", resp.StatusCode, string(respBody))
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody)), "log_processor").Error("Logparser microservice returned error status")
+		return nil, string(respBody), fmt.Errorf("logparser microservice returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var parsed []map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("failed to decode logparser response: %w", err)
+		logger.WithError(err, "log_processor").Error("Failed to decode logparser response")
+		return nil, "failed to decode logparser response", fmt.Errorf("failed to decode logparser response: %w", err)
 	}
+
+	logEntry.Info("Successfully parsed log entries", map[string]interface{}{
+		"parsed_count": len(parsed),
+	})
 
 	var entries []models.LogEntry
 	for _, item := range parsed {
 		entry := NormalizeToLogEntry(0, item) // Pass 0 for logFileID as it's not a file-specific entry
 		entries = append(entries, entry)
 	}
-	return entries, nil
+	return entries, "", nil
 }
 
 // Update ProcessLogFile to use logparser microservice for non-JSON logs
 func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
-	log.Printf("[LOG PROCESSOR] Starting to process log file %d: %s", logFileID, filePath)
+	logEntry := logger.WithLogFile(logFileID, filepath.Base(filePath))
+
+	logEntry.Info("Starting log file processing", map[string]interface{}{
+		"file_path": filePath,
+		"file_size": func() int64 {
+			if info, err := os.Stat(filePath); err == nil {
+				return info.Size()
+			}
+			return 0
+		}(),
+	})
 
 	// Database health check
 	var count int64
 	if err := lp.db.Model(&models.LogEntry{}).Count(&count).Error; err != nil {
-		log.Printf("[LOG PROCESSOR] Database health check failed: %v", err)
+		logger.WithError(err, "log_processor").Error("Database health check failed")
 		return fmt.Errorf("database health check failed: %w", err)
 	}
-	log.Printf("[LOG PROCESSOR] Database health check passed, current log_entries count: %d", count)
+	logEntry.Debug("Database health check passed", map[string]interface{}{
+		"current_log_entries_count": count,
+	})
 
 	// Test database write capability
 	testEntry := models.LogEntry{
@@ -118,174 +176,239 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		Message:   "Test entry for database write verification",
 	}
 	if err := lp.db.Create(&testEntry).Error; err != nil {
-		log.Printf("[LOG PROCESSOR] Database write test failed: %v", err)
+		logger.WithError(err, "log_processor").Error("Database write test failed")
 		return fmt.Errorf("database write test failed: %w", err)
 	}
-	log.Printf("[LOG PROCESSOR] Database write test passed, created test entry with ID: %d", testEntry.ID)
+	logEntry.Debug("Database write test passed", map[string]interface{}{
+		"test_entry_id": testEntry.ID,
+	})
 
 	// Clean up test entry
 	if err := lp.db.Delete(&testEntry).Error; err != nil {
-		log.Printf("[LOG PROCESSOR] Warning: Failed to clean up test entry: %v", err)
+		logger.WithError(err, "log_processor").Warn("Failed to clean up test entry")
 	}
 
 	// Update status to processing
 	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", "processing").Error; err != nil {
+		logger.WithError(err, "log_processor").Error("Failed to update log file status to processing")
 		return fmt.Errorf("failed to update log file status: %w", err)
 	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
+		logger.WithError(err, "log_processor").Error("Failed to open log file")
 		lp.updateLogFileStatus(logFileID, "failed")
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
 	defer file.Close()
 
-	// Test file reading - read first few lines to verify content
-	log.Printf("[LOG PROCESSOR] Testing file reading for %s", filePath)
-	file.Seek(0, 0)
-	testScanner := bufio.NewScanner(file)
-	lineCount := 0
-	for testScanner.Scan() && lineCount < 3 {
-		line := strings.TrimSpace(testScanner.Text())
-		if line != "" {
-			log.Printf("[LOG PROCESSOR] Test line %d: %s", lineCount+1, line[:min(len(line), 100)])
-		}
-		lineCount++
-	}
-	if err := testScanner.Err(); err != nil {
-		log.Printf("[LOG PROCESSOR] Error during test reading: %v", err)
-	}
-	log.Printf("[LOG PROCESSOR] File test reading completed, found %d non-empty lines in first 3", lineCount)
+	// Pre-processing: categorize each line
 
-	var entries []models.LogEntry
-	var errorCount, warningCount int
+	var (
+		lines                                       []lineInfo
+		validCount, fixableCount, unstructuredCount int
+	)
 
 	scanner := bufio.NewScanner(file)
-	lineNumber := 0
-	isAllJSON := true
-	var nonJSONLines []string
-	const sampleLimit = 10
-
-	log.Printf("[LOG PROCESSOR] Scanning file to determine format...")
+	lineNum := 0
 	for scanner.Scan() {
-		lineNumber++
+		lineNum++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		var parsedMap map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &parsedMap); err != nil {
-			isAllJSON = false
-			if len(nonJSONLines) < sampleLimit {
-				nonJSONLines = append(nonJSONLines, line)
-			}
+		// Try direct JSON parse
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &parsed); err == nil {
+			lines = append(lines, lineInfo{lineNum, line, validJSON, false, false, ""})
+			validCount++
+			continue
 		}
+		// Try to auto-fix common JSON issues (e.g., trailing comma, single quotes)
+		fixed, fixReason := attemptFixJSON(line)
+		if fixed != "" {
+			if err := json.Unmarshal([]byte(fixed), &parsed); err == nil {
+				lines = append(lines, lineInfo{lineNum, fixed, fixableJSON, true, true, fixReason})
+				fixableCount++
+				continue
+			}
+			lines = append(lines, lineInfo{lineNum, line, fixableJSON, true, false, "Fix attempted but still invalid: " + fixReason})
+			unstructuredCount++
+			continue
+		}
+		lines = append(lines, lineInfo{lineNum, line, unstructured, false, false, "Not JSON and not fixable"})
+		unstructuredCount++
 	}
-
 	if err := scanner.Err(); err != nil {
+		logger.WithError(err, "log_processor").Error("Error reading log file")
 		lp.updateLogFileStatus(logFileID, "failed")
 		return fmt.Errorf("error reading log file: %w", err)
 	}
 
-	log.Printf("[LOG PROCESSOR] File format determined: isAllJSON=%v, totalLines=%d", isAllJSON, lineNumber)
+	// Multi-line log entry handling
+	lines = lp.handleMultiLineLogs(lines)
 
-	if isAllJSON {
-		log.Printf("[LOG PROCESSOR] Processing as JSON logs...")
-		// Rewind file
-		file.Seek(0, 0)
-		scanner = bufio.NewScanner(file)
-		lineNumber = 0
-		for scanner.Scan() {
-			lineNumber++
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			var parsedMap map[string]interface{}
-			if err := json.Unmarshal([]byte(line), &parsedMap); err != nil {
-				log.Printf("Failed to parse line %d: %v", lineNumber, err)
-				continue
-			}
-			log.Printf("[LOG PROCESSOR] Parsed line %d: %+v", lineNumber, parsedMap)
-			entry := NormalizeToLogEntry(logFileID, parsedMap)
-			log.Printf("[LOG PROCESSOR] LogEntry for line %d: %+v", lineNumber, entry)
-			entry.LogFileID = logFileID
-			entries = append(entries, entry)
-			switch entry.Level {
-			case "ERROR", "FATAL":
-				errorCount++
-			case "WARN":
-				warningCount++
+	totalLines := validCount + fixableCount + unstructuredCount
+	logEntry.Info("Pre-processing complete", map[string]interface{}{
+		"total_lines":  totalLines,
+		"valid_json":   validCount,
+		"fixable_json": fixableCount,
+		"unstructured": unstructuredCount,
+	})
+
+	if totalLines == 0 {
+		logEntry.Warn("No non-empty lines found in log file")
+		lp.updateLogFileStatus(logFileID, "failed")
+		return fmt.Errorf("no non-empty lines in log file")
+	}
+
+	jsonThreshold := 0.8
+	jsonLines := validCount + fixableCount
+	jsonRatio := float64(jsonLines) / float64(totalLines)
+	var entries []models.LogEntry
+	var errorCount, warningCount int
+	var failedLines []lineInfo
+
+	// Decide parsing strategy: robust hybrid mode
+	if jsonRatio > 0 {
+		logEntry.Info("Processing as JSON/hybrid log file (robust mode)", map[string]interface{}{
+			"json_ratio":   jsonRatio,
+			"threshold":    jsonThreshold,
+			"valid_json":   validCount,
+			"fixable_json": fixableCount,
+			"unstructured": unstructuredCount,
+		})
+		// Parse all valid/fixed JSON lines
+		for _, info := range lines {
+			if info.category == validJSON || (info.category == fixableJSON && info.fixSuccess) {
+				var parsed map[string]interface{}
+				if err := json.Unmarshal([]byte(info.content), &parsed); err == nil {
+					entry := NormalizeToLogEntry(logFileID, parsed)
+					entry.LogFileID = logFileID
+					entries = append(entries, entry)
+					if entry.Level == "ERROR" || entry.Level == "FATAL" {
+						errorCount++
+					} else if entry.Level == "WARN" {
+						warningCount++
+					}
+				} else {
+					failedLines = append(failedLines, info)
+				}
+			} else if info.category == unstructured || (info.category == fixableJSON && !info.fixSuccess) {
+				failedLines = append(failedLines, info)
 			}
 		}
-		log.Printf("[LOG PROCESSOR] JSON processing complete: %d entries parsed", len(entries))
+		// Fallback for failed/unstructured lines
+		if len(failedLines) > 0 {
+			logEntry.Info("Attempting ML/regex fallback for unstructured lines", map[string]interface{}{"count": len(failedLines)})
+			var fallbackLines []string
+			for _, info := range failedLines {
+				fallbackLines = append(fallbackLines, info.content)
+			}
+			if len(fallbackLines) > 0 {
+				tmpPath := filePath + ".unstructured.tmp"
+				if err := os.WriteFile(tmpPath, []byte(strings.Join(fallbackLines, "\n")), 0644); err == nil {
+					parsedEntries, parseErrMsg, err := lp.callLogparserMicroservice(tmpPath, "")
+					if err == nil {
+						for i := range parsedEntries {
+							parsedEntries[i].LogFileID = logFileID
+							entries = append(entries, parsedEntries[i])
+							if parsedEntries[i].Level == "ERROR" || parsedEntries[i].Level == "FATAL" {
+								errorCount++
+							} else if parsedEntries[i].Level == "WARN" {
+								warningCount++
+							}
+						}
+						logEntry.Info("ML fallback parsed entries", map[string]interface{}{"count": len(parsedEntries)})
+					} else {
+						logEntry.Warn("ML fallback failed, using regex fallback", map[string]interface{}{"error": parseErrMsg})
+						for _, info := range failedLines {
+							parsed := regexFallback(info.content)
+							if len(parsed) > 0 {
+								entry := NormalizeToLogEntry(logFileID, parsed)
+								entry.LogFileID = logFileID
+								entries = append(entries, entry)
+								if entry.Level == "ERROR" || entry.Level == "FATAL" {
+									errorCount++
+								} else if entry.Level == "WARN" {
+									warningCount++
+								}
+							}
+						}
+					}
+					os.Remove(tmpPath)
+				}
+			}
+		}
 	} else {
-		log.Printf("[LOG PROCESSOR] Processing as unstructured logs...")
-		// Infer log format from non-JSON samples using LLM
-		logFormat := ""
-		if len(nonJSONLines) > 0 {
-			var err error
-			logFormat, err = lp.llmService.InferLogFormatFromSamples(nonJSONLines, &logFileID)
-			if err != nil {
-				log.Printf("[LLM] Failed to infer log format: %v, falling back to default", err)
-				logFormat = ""
-			} else {
-				log.Printf("[LLM] Inferred log format: %s", logFormat)
-			}
-		}
-		parsedEntries, err := lp.callLogparserMicroservice(filePath, logFormat)
+		logEntry.Info("Processing as unstructured log file (ML logparser, robust mode)", map[string]interface{}{
+			"json_ratio":   jsonRatio,
+			"valid_json":   validCount,
+			"fixable_json": fixableCount,
+			"unstructured": unstructuredCount,
+		})
+		parsedEntries, parseErrMsg, err := lp.callLogparserMicroservice(filePath, "")
 		if err != nil {
-			lp.updateLogFileStatus(logFileID, "failed")
+			logger.WithError(err, "log_processor").Error("Logparser microservice failed", map[string]interface{}{
+				"parse_error_message": parseErrMsg,
+			})
+			lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Updates(map[string]interface{}{
+				"status":      "failed",
+				"parse_error": parseErrMsg,
+			})
 			return fmt.Errorf("logparser microservice failed: %w", err)
 		}
 		for i := range parsedEntries {
 			parsedEntries[i].LogFileID = logFileID
-			// Count errors and warnings
-			switch parsedEntries[i].Level {
-			case "ERROR", "FATAL":
+			entries = append(entries, parsedEntries[i])
+			if parsedEntries[i].Level == "ERROR" || parsedEntries[i].Level == "FATAL" {
 				errorCount++
-			case "WARN":
+			} else if parsedEntries[i].Level == "WARN" {
 				warningCount++
 			}
 		}
-		entries = append(entries, parsedEntries...)
-		log.Printf("[LOG PROCESSOR] Unstructured processing complete: %d entries parsed", len(entries))
+		logEntry.Info("Unstructured processing complete", map[string]interface{}{"entries_parsed": len(parsedEntries)})
 	}
 
 	// Save entries in batches
 	if len(entries) > 0 {
-		log.Printf("[LOG PROCESSOR] Saving %d entries to database...", len(entries))
-
-		// Validate entries before saving
+		logEntry.Info("Saving entries to database", map[string]interface{}{"entries_to_save": len(entries)})
 		for i, entry := range entries {
 			if entry.LogFileID == 0 {
-				log.Printf("[LOG PROCESSOR] Error: Entry %d has zero LogFileID", i)
+				logEntry.Error("Entry has zero LogFileID", map[string]interface{}{"entry_index": i})
 			}
 			if entry.Timestamp.IsZero() {
-				log.Printf("[LOG PROCESSOR] Warning: Entry %d has zero timestamp", i)
+				logEntry.Warn("Entry has zero timestamp", map[string]interface{}{"entry_index": i})
 			}
 			if entry.Message == "" {
-				log.Printf("[LOG PROCESSOR] Warning: Entry %d has empty message", i)
+				logEntry.Warn("Entry has empty message", map[string]interface{}{"entry_index": i})
 			}
 		}
-
 		if err := lp.db.CreateInBatches(entries, 100).Error; err != nil {
+			logger.WithError(err, "log_processor").Error("Database save error")
 			lp.updateLogFileStatus(logFileID, "failed")
-			log.Printf("[LOG PROCESSOR] Database save error: %v", err)
 			return fmt.Errorf("failed to save log entries: %w", err)
 		}
-
-		// Verify entries were saved
 		var savedCount int64
 		if err := lp.db.Model(&models.LogEntry{}).Where("log_file_id = ?", logFileID).Count(&savedCount).Error; err != nil {
-			log.Printf("[LOG PROCESSOR] Warning: Could not verify saved entries: %v", err)
+			logger.WithError(err, "log_processor").Warn("Could not verify saved entries")
 		} else {
-			log.Printf("[LOG PROCESSOR] Verified %d entries saved to database", savedCount)
+			logEntry.Info("Verified entries saved to database", map[string]interface{}{"saved_count": savedCount})
 		}
-
-		log.Printf("[LOG PROCESSOR] Successfully saved %d entries to database", len(entries))
+		logEntry.Info("Successfully saved entries to database", map[string]interface{}{"entries_saved": len(entries)})
 	} else {
-		log.Printf("[LOG PROCESSOR] Warning: No entries to save")
+		logEntry.Warn("No entries to save")
+	}
+
+	// Log/report all failed/skipped lines
+	if len(failedLines) > 0 {
+		for _, info := range failedLines {
+			logEntry.Warn("Line failed to parse", map[string]interface{}{
+				"line_number": info.lineNum,
+				"reason":      info.reason,
+				"content":     info.content,
+			})
+		}
 	}
 
 	// Update log file with final stats
@@ -297,20 +420,446 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		"warning_count": warningCount,
 		"processed_at":  &now,
 	}
-
-	log.Printf("[LOG PROCESSOR] Updating log file stats: entries=%d, errors=%d, warnings=%d", len(entries), errorCount, warningCount)
-
+	logEntry.Info("Updating log file stats", map[string]interface{}{
+		"entries":  len(entries),
+		"errors":   errorCount,
+		"warnings": warningCount,
+		"status":   "completed",
+	})
 	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Updates(updateData).Error; err != nil {
+		logger.WithError(err, "log_processor").Error("Failed to update log file stats")
 		return fmt.Errorf("failed to update log file stats: %w", err)
 	}
-
-	// Delete the uploaded file after successful parsing and DB write
 	if err := os.Remove(filePath); err != nil {
-		log.Printf("Warning: failed to delete uploaded file %s: %v", filePath, err)
+		logger.WithError(err, "log_processor").Warn("Failed to delete uploaded file")
+	} else {
+		logEntry.Debug("Successfully deleted uploaded file", map[string]interface{}{"file_path": filePath})
+	}
+	logEntry.Info("Log file processing completed successfully")
+	return nil
+}
+
+// ProcessLogFileWithShutdown processes a log file with shutdown support
+func (lp *LogProcessor) ProcessLogFileWithShutdown(logFileID uint, filePath string, stopChan <-chan struct{}) error {
+	completed := false
+	defer func() {
+		if !completed {
+			lp.updateLogFileStatus(logFileID, "failed")
+		}
+	}()
+
+	logEntry := logger.WithLogFile(logFileID, filepath.Base(filePath))
+	logEntry.Info("Starting log file processing", map[string]interface{}{
+		"file_path": filePath,
+		"file_size": func() int64 {
+			if info, err := os.Stat(filePath); err == nil {
+				return info.Size()
+			}
+			return 0
+		}(),
+	})
+
+	// Check for shutdown before starting
+	select {
+	case <-stopChan:
+		return nil
+	default:
 	}
 
-	log.Printf("[LOG PROCESSOR] Log file processing completed successfully")
+	// Database health check
+	var count int64
+	if err := lp.db.Model(&models.LogEntry{}).Count(&count).Error; err != nil {
+		logger.WithError(err, "log_processor").Error("Database health check failed")
+		return fmt.Errorf("database health check failed: %w", err)
+	}
+	logEntry.Debug("Database health check passed", map[string]interface{}{
+		"current_log_entries_count": count,
+	})
+
+	// Test database write capability
+	testEntry := models.LogEntry{
+		LogFileID: logFileID,
+		Timestamp: time.Now(),
+		Level:     "TEST",
+		Message:   "Test entry for database write verification",
+	}
+	if err := lp.db.Create(&testEntry).Error; err != nil {
+		logger.WithError(err, "log_processor").Error("Database write test failed")
+		return fmt.Errorf("database write test failed: %w", err)
+	}
+	logEntry.Debug("Database write test passed", map[string]interface{}{
+		"test_entry_id": testEntry.ID,
+	})
+
+	// Clean up test entry
+	if err := lp.db.Delete(&testEntry).Error; err != nil {
+		logger.WithError(err, "log_processor").Warn("Failed to clean up test entry")
+	}
+
+	// Update status to processing
+	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", "processing").Error; err != nil {
+		logger.WithError(err, "log_processor").Error("Failed to update log file status to processing")
+		return fmt.Errorf("failed to update log file status: %w", err)
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		logger.WithError(err, "log_processor").Error("Failed to open log file")
+		lp.updateLogFileStatus(logFileID, "failed")
+		return fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer file.Close()
+
+	// Pre-processing: categorize each line
+
+	var (
+		lines                                       []lineInfo
+		validCount, fixableCount, unstructuredCount int
+	)
+
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// Try direct JSON parse
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &parsed); err == nil {
+			lines = append(lines, lineInfo{lineNum, line, validJSON, false, false, ""})
+			validCount++
+			continue
+		}
+		// Try to auto-fix common JSON issues (e.g., trailing comma, single quotes)
+		fixed, fixReason := attemptFixJSON(line)
+		if fixed != "" {
+			if err := json.Unmarshal([]byte(fixed), &parsed); err == nil {
+				lines = append(lines, lineInfo{lineNum, fixed, fixableJSON, true, true, fixReason})
+				fixableCount++
+				continue
+			}
+			lines = append(lines, lineInfo{lineNum, line, fixableJSON, true, false, "Fix attempted but still invalid: " + fixReason})
+			unstructuredCount++
+			continue
+		}
+		lines = append(lines, lineInfo{lineNum, line, unstructured, false, false, "Not JSON and not fixable"})
+		unstructuredCount++
+	}
+	if err := scanner.Err(); err != nil {
+		logger.WithError(err, "log_processor").Error("Error reading log file")
+		lp.updateLogFileStatus(logFileID, "failed")
+		return fmt.Errorf("error reading log file: %w", err)
+	}
+
+	// Multi-line log entry handling
+	lines = lp.handleMultiLineLogs(lines)
+
+	totalLines := validCount + fixableCount + unstructuredCount
+	logEntry.Info("Pre-processing complete", map[string]interface{}{
+		"total_lines":  totalLines,
+		"valid_json":   validCount,
+		"fixable_json": fixableCount,
+		"unstructured": unstructuredCount,
+	})
+
+	if totalLines == 0 {
+		logEntry.Warn("No non-empty lines found in log file")
+		lp.updateLogFileStatus(logFileID, "failed")
+		return fmt.Errorf("no non-empty lines in log file")
+	}
+
+	jsonThreshold := 0.8
+	jsonLines := validCount + fixableCount
+	jsonRatio := float64(jsonLines) / float64(totalLines)
+	var entries []models.LogEntry
+	var errorCount, warningCount int
+	var failedLines []lineInfo
+
+	// Decide parsing strategy: robust hybrid mode
+	if jsonRatio > 0 {
+		logEntry.Info("Processing as JSON/hybrid log file (robust mode)", map[string]interface{}{
+			"json_ratio":   jsonRatio,
+			"threshold":    jsonThreshold,
+			"valid_json":   validCount,
+			"fixable_json": fixableCount,
+			"unstructured": unstructuredCount,
+		})
+		// Parse all valid/fixed JSON lines
+		for _, info := range lines {
+			if info.category == validJSON || (info.category == fixableJSON && info.fixSuccess) {
+				var parsed map[string]interface{}
+				if err := json.Unmarshal([]byte(info.content), &parsed); err == nil {
+					entry := NormalizeToLogEntry(logFileID, parsed)
+					entry.LogFileID = logFileID
+					entries = append(entries, entry)
+					if entry.Level == "ERROR" || entry.Level == "FATAL" {
+						errorCount++
+					} else if entry.Level == "WARN" {
+						warningCount++
+					}
+				} else {
+					failedLines = append(failedLines, info)
+				}
+			} else if info.category == unstructured || (info.category == fixableJSON && !info.fixSuccess) {
+				failedLines = append(failedLines, info)
+			}
+		}
+		// Fallback for failed/unstructured lines
+		if len(failedLines) > 0 {
+			logEntry.Info("Attempting ML/regex fallback for unstructured lines", map[string]interface{}{"count": len(failedLines)})
+			var fallbackLines []string
+			for _, info := range failedLines {
+				fallbackLines = append(fallbackLines, info.content)
+			}
+			if len(fallbackLines) > 0 {
+				tmpPath := filePath + ".unstructured.tmp"
+				if err := os.WriteFile(tmpPath, []byte(strings.Join(fallbackLines, "\n")), 0644); err == nil {
+					parsedEntries, parseErrMsg, err := lp.callLogparserMicroservice(tmpPath, "")
+					if err == nil {
+						for i := range parsedEntries {
+							parsedEntries[i].LogFileID = logFileID
+							entries = append(entries, parsedEntries[i])
+							if parsedEntries[i].Level == "ERROR" || parsedEntries[i].Level == "FATAL" {
+								errorCount++
+							} else if parsedEntries[i].Level == "WARN" {
+								warningCount++
+							}
+						}
+						logEntry.Info("ML fallback parsed entries", map[string]interface{}{"count": len(parsedEntries)})
+					} else {
+						logEntry.Warn("ML fallback failed, using regex fallback", map[string]interface{}{"error": parseErrMsg})
+						for _, info := range failedLines {
+							parsed := regexFallback(info.content)
+							if len(parsed) > 0 {
+								entry := NormalizeToLogEntry(logFileID, parsed)
+								entry.LogFileID = logFileID
+								entries = append(entries, entry)
+								if entry.Level == "ERROR" || entry.Level == "FATAL" {
+									errorCount++
+								} else if entry.Level == "WARN" {
+									warningCount++
+								}
+							}
+						}
+					}
+					os.Remove(tmpPath)
+				}
+			}
+		}
+	} else {
+		logEntry.Info("Processing as unstructured log file (ML logparser, robust mode)", map[string]interface{}{
+			"json_ratio":   jsonRatio,
+			"valid_json":   validCount,
+			"fixable_json": fixableCount,
+			"unstructured": unstructuredCount,
+		})
+		parsedEntries, parseErrMsg, err := lp.callLogparserMicroservice(filePath, "")
+		if err != nil {
+			logger.WithError(err, "log_processor").Error("Logparser microservice failed", map[string]interface{}{
+				"parse_error_message": parseErrMsg,
+			})
+			lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Updates(map[string]interface{}{
+				"status":      "failed",
+				"parse_error": parseErrMsg,
+			})
+			return fmt.Errorf("logparser microservice failed: %w", err)
+		}
+		for i := range parsedEntries {
+			parsedEntries[i].LogFileID = logFileID
+			entries = append(entries, parsedEntries[i])
+			if parsedEntries[i].Level == "ERROR" || parsedEntries[i].Level == "FATAL" {
+				errorCount++
+			} else if parsedEntries[i].Level == "WARN" {
+				warningCount++
+			}
+		}
+		logEntry.Info("Unstructured processing complete", map[string]interface{}{"entries_parsed": len(parsedEntries)})
+	}
+
+	// Save entries in batches
+	if len(entries) > 0 {
+		logEntry.Info("Saving entries to database", map[string]interface{}{"entries_to_save": len(entries)})
+		for i, entry := range entries {
+			if entry.LogFileID == 0 {
+				logEntry.Error("Entry has zero LogFileID", map[string]interface{}{"entry_index": i})
+			}
+			if entry.Timestamp.IsZero() {
+				logEntry.Warn("Entry has zero timestamp", map[string]interface{}{"entry_index": i})
+			}
+			if entry.Message == "" {
+				logEntry.Warn("Entry has empty message", map[string]interface{}{"entry_index": i})
+			}
+		}
+		if err := lp.db.CreateInBatches(entries, 100).Error; err != nil {
+			logger.WithError(err, "log_processor").Error("Database save error")
+			lp.updateLogFileStatus(logFileID, "failed")
+			return fmt.Errorf("failed to save log entries: %w", err)
+		}
+		var savedCount int64
+		if err := lp.db.Model(&models.LogEntry{}).Where("log_file_id = ?", logFileID).Count(&savedCount).Error; err != nil {
+			logger.WithError(err, "log_processor").Warn("Could not verify saved entries")
+		} else {
+			logEntry.Info("Verified entries saved to database", map[string]interface{}{"saved_count": savedCount})
+		}
+		logEntry.Info("Successfully saved entries to database", map[string]interface{}{"entries_saved": len(entries)})
+	} else {
+		logEntry.Warn("No entries to save")
+	}
+
+	// Log/report all failed/skipped lines
+	if len(failedLines) > 0 {
+		for _, info := range failedLines {
+			logEntry.Warn("Line failed to parse", map[string]interface{}{
+				"line_number": info.lineNum,
+				"reason":      info.reason,
+				"content":     info.content,
+			})
+		}
+	}
+
+	// Update log file with final stats
+	now := time.Now()
+	updateData := map[string]interface{}{
+		"status":        "completed",
+		"entry_count":   len(entries),
+		"error_count":   errorCount,
+		"warning_count": warningCount,
+		"processed_at":  &now,
+	}
+	logEntry.Info("Updating log file stats", map[string]interface{}{
+		"entries":  len(entries),
+		"errors":   errorCount,
+		"warnings": warningCount,
+		"status":   "completed",
+	})
+	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Updates(updateData).Error; err != nil {
+		logger.WithError(err, "log_processor").Error("Failed to update log file stats")
+		return fmt.Errorf("failed to update log file stats: %w", err)
+	}
+	if err := os.Remove(filePath); err != nil {
+		logger.WithError(err, "log_processor").Warn("Failed to delete uploaded file")
+	} else {
+		logEntry.Debug("Successfully deleted uploaded file", map[string]interface{}{"file_path": filePath})
+	}
+	logEntry.Info("Log file processing completed successfully")
+	completed = true
 	return nil
+}
+
+// attemptFixJSON tries to auto-fix common JSON issues in a line. Returns fixed string and reason if fix attempted.
+func attemptFixJSON(line string) (string, string) {
+	// Replace single quotes with double quotes if no double quotes present
+	if strings.Contains(line, "'") && !strings.Contains(line, "\"") {
+		fixed := strings.ReplaceAll(line, "'", "\"")
+		return fixed, "Replaced single quotes with double quotes"
+	}
+	// Remove trailing comma
+	if strings.HasSuffix(line, ",") {
+		fixed := strings.TrimRight(line, ",")
+		return fixed, "Removed trailing comma"
+	}
+	// Add missing closing brace(s)
+	openBraces := strings.Count(line, "{")
+	closeBraces := strings.Count(line, "}")
+	if openBraces > closeBraces {
+		fixed := line + strings.Repeat("}", openBraces-closeBraces)
+		return fixed, "Added missing closing brace(s)"
+	}
+	// Remove extra closing brace(s)
+	if closeBraces > openBraces {
+		fixed := line
+		for closeBraces > openBraces {
+			idx := strings.LastIndex(fixed, "}")
+			if idx != -1 {
+				fixed = fixed[:idx] + fixed[idx+1:]
+				closeBraces--
+			}
+		}
+		return fixed, "Removed extra closing brace(s)"
+	}
+	// Remove extra comma before closing brace
+	if strings.Contains(line, ",}") {
+		fixed := strings.ReplaceAll(line, ",}", "}")
+		return fixed, "Removed extra comma before closing brace"
+	}
+	// Remove non-printable/control characters
+	clean := strings.Map(func(r rune) rune {
+		if r < 32 && r != '\t' && r != '\n' && r != '\r' {
+			return -1
+		}
+		return r
+	}, line)
+	if clean != line {
+		return clean, "Removed non-printable/control characters"
+	}
+	// Attempt to close partial/truncated JSON (if starts with { and missing })
+	if strings.HasPrefix(line, "{") && !strings.HasSuffix(line, "}") {
+		fixed := line + "}"
+		return fixed, "Closed partial/truncated JSON with }"
+	}
+	// Attempt to escape unescaped double quotes inside values
+	if strings.Count(line, "\"")%2 != 0 {
+		fixed := strings.ReplaceAll(line, "\"", "\\\"")
+		return fixed, "Escaped unescaped double quotes"
+	}
+	return "", ""
+}
+
+// regexFallback attempts to extract timestamp, level, and message from a log line using regex
+func regexFallback(line string) map[string]interface{} {
+	patterns := []struct {
+		name   string
+		regex  string
+		fields []string
+	}{
+		// Apache/Nginx common log format
+		{"apache_nginx", `^(?P<ip>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) \S+" (?P<status>\d{3}) (?P<size>\d+|-)`, []string{"ip", "timestamp", "method", "path", "status", "size"}},
+		// Syslog
+		{"syslog", `^(?P<timestamp>[A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2}) (?P<host>\S+) (?P<process>\S+): (?P<message>.*)$`, []string{"timestamp", "host", "process", "message"}},
+		// Java stack trace (first line)
+		{"java_stack", `^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?P<level>\w+) \[(?P<thread>[^\]]+)\] (?P<class>\S+) - (?P<message>.*)$`, []string{"timestamp", "level", "thread", "class", "message"}},
+		// RFC3339 timestamp with level and message
+		{"rfc3339_level", `^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})) (?P<level>INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)[:\s-]*(?P<message>.*)$`, []string{"timestamp", "level", "message"}},
+	}
+	for _, pat := range patterns {
+		re := regexp.MustCompile(pat.regex)
+		match := re.FindStringSubmatch(line)
+		if match != nil {
+			result := make(map[string]interface{})
+			for i, name := range re.SubexpNames() {
+				if i != 0 && name != "" {
+					result[name] = match[i]
+				}
+			}
+			return result
+		}
+	}
+	// Fallback: generic timestamp, level, message extraction
+	timestampRegex := `([0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)`
+	levelRegex := `\b(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)\b`
+	msgRegex := `(?:INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)[:\s-]*(.*)$`
+	result := make(map[string]interface{})
+	if ts := findFirstMatch(line, timestampRegex); ts != "" {
+		result["timestamp"] = ts
+	}
+	if lvl := findFirstMatch(line, levelRegex); lvl != "" {
+		result["level"] = lvl
+	}
+	if msg := findFirstMatch(line, msgRegex); msg != "" {
+		result["message"] = strings.TrimSpace(msg)
+	}
+	return result
+}
+
+func findFirstMatch(line, pattern string) string {
+	re := regexp.MustCompile(pattern)
+	matches := re.FindStringSubmatch(line)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
 }
 
 func (lp *LogProcessor) parseTimestamp(timestampStr string) (time.Time, error) {
@@ -359,6 +908,219 @@ func (lp *LogProcessor) updateLogFileStatus(logFileID uint, status string) {
 	lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Update("status", status)
 }
 
+// handleMultiLineLogs processes multi-line log entries and merges related lines
+func (lp *LogProcessor) handleMultiLineLogs(lines []lineInfo) []lineInfo {
+	// If all lines are valid or fixable JSON, do not merge—just return as-is
+	allJSON := true
+	for _, info := range lines {
+		if info.category != validJSON && !(info.category == fixableJSON && info.fixSuccess) {
+			allJSON = false
+			break
+		}
+	}
+	if allJSON {
+		logger.Info("Multi-line log processing skipped: all lines are valid/fixable JSON", map[string]interface{}{
+			"component":      "log_processor",
+			"original_lines": len(lines),
+		})
+		return lines
+	}
+
+	if len(lines) == 0 {
+		return lines
+	}
+
+	var processedLines []lineInfo
+	var currentMultiLine *lineInfo
+	var stackTraceLines []string
+
+	for i, line := range lines {
+		// Check if this line is part of a multi-line JSON
+		if currentMultiLine != nil {
+			// Try to merge with current multi-line JSON
+			merged := currentMultiLine.content + "\n" + line.content
+			var parsed map[string]interface{}
+			if err := json.Unmarshal([]byte(merged), &parsed); err == nil {
+				// Successfully merged multi-line JSON
+				currentMultiLine.content = merged
+				currentMultiLine.reason = "Merged multi-line JSON"
+				continue
+			}
+			// Try to auto-fix the merged JSON
+			fixed, fixReason := attemptFixJSON(merged)
+			if fixed != "" {
+				if err := json.Unmarshal([]byte(fixed), &parsed); err == nil {
+					currentMultiLine.content = fixed
+					currentMultiLine.reason = "Merged and fixed multi-line JSON: " + fixReason
+					continue
+				}
+			}
+			// If we can't merge, finalize the current multi-line and start new
+			processedLines = append(processedLines, *currentMultiLine)
+			currentMultiLine = nil
+		}
+
+		// Check if this line starts a multi-line JSON (starts with { but doesn't end with })
+		if strings.HasPrefix(line.content, "{") && !strings.HasSuffix(strings.TrimSpace(line.content), "}") {
+			currentMultiLine = &lineInfo{
+				lineNum:      line.lineNum,
+				content:      line.content,
+				category:     line.category,
+				fixAttempted: line.fixAttempted,
+				fixSuccess:   line.fixSuccess,
+				reason:       "Started multi-line JSON",
+			}
+			continue
+		}
+
+		// Check if this line is part of a stack trace
+		if lp.isStackTraceLine(line.content) {
+			if len(stackTraceLines) == 0 {
+				// Start new stack trace
+				stackTraceLines = []string{line.content}
+			} else {
+				// Continue existing stack trace
+				stackTraceLines = append(stackTraceLines, line.content)
+			}
+			continue
+		} else if len(stackTraceLines) > 0 {
+			// End of stack trace, merge with previous line
+			if len(processedLines) > 0 {
+				lastLine := &processedLines[len(processedLines)-1]
+				lastLine.content = lastLine.content + "\n" + strings.Join(stackTraceLines, "\n")
+				lastLine.reason = "Merged with stack trace"
+			}
+			stackTraceLines = nil
+		}
+
+		// Check if this line is a continuation of a structured log
+		previousLine := ""
+		if i > 0 {
+			previousLine = lines[i-1].content
+		}
+		if lp.isLogContinuation(line.content, previousLine) {
+			if len(processedLines) > 0 {
+				lastLine := &processedLines[len(processedLines)-1]
+				lastLine.content = lastLine.content + "\n" + line.content
+				lastLine.reason = "Merged log continuation"
+				continue
+			}
+		}
+
+		// Regular line, add to processed lines
+		processedLines = append(processedLines, line)
+	}
+
+	// Handle any remaining multi-line JSON or stack trace
+	if currentMultiLine != nil {
+		processedLines = append(processedLines, *currentMultiLine)
+	}
+	if len(stackTraceLines) > 0 {
+		if len(processedLines) > 0 {
+			lastLine := &processedLines[len(processedLines)-1]
+			lastLine.content = lastLine.content + "\n" + strings.Join(stackTraceLines, "\n")
+			lastLine.reason = "Merged with stack trace"
+		}
+	}
+
+	logger.WithContext(map[string]interface{}{
+		"original_lines":  len(lines),
+		"processed_lines": len(processedLines),
+		"component":       "log_processor",
+	}).Info("Multi-line log processing completed")
+
+	return processedLines
+}
+
+// isStackTraceLine checks if a line is part of a stack trace
+func (lp *LogProcessor) isStackTraceLine(line string) bool {
+	line = strings.TrimSpace(line)
+
+	// Common stack trace patterns
+	patterns := []string{
+		`^\s*at\s+\w+\.\w+\([^)]*\)`,                // Java/C# stack trace
+		`^\s*File\s+"[^"]*",\s+line\s+\d+`,          // Python stack trace
+		`^\s*#\d+\s+\w+\s+in\s+`,                    // Ruby stack trace
+		`^\s*from\s+\w+`,                            // Python import error
+		`^\s*Caused by:`,                            // Java exception chain
+		`^\s*Suppressed:`,                           // Java suppressed exceptions
+		`^\s*\w+Exception:`,                         // Generic exception
+		`^\s*\w+Error:`,                             // Generic error
+		`^\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}`, // Timestamped error lines
+	}
+
+	for _, pattern := range patterns {
+		if matched, _ := regexp.MatchString(pattern, line); matched {
+			return true
+		}
+	}
+
+	// Check for indented lines that might be stack trace continuation
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		// If it's indented and contains common stack trace keywords
+		keywords := []string{"at ", "File ", "line ", "Exception", "Error", "Caused by", "from "}
+		for _, keyword := range keywords {
+			if strings.Contains(line, keyword) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isLogContinuation checks if a line is a continuation of a previous log entry
+func (lp *LogProcessor) isLogContinuation(currentLine, previousLine string) bool {
+	currentLine = strings.TrimSpace(currentLine)
+	previousLine = strings.TrimSpace(previousLine)
+
+	// If previous line is empty, this can't be a continuation
+	if previousLine == "" {
+		return false
+	}
+
+	// Check if current line is indented (common continuation pattern)
+	if strings.HasPrefix(currentLine, " ") || strings.HasPrefix(currentLine, "\t") {
+		return true
+	}
+
+	// Check if previous line ends with continuation indicators
+	continuationIndicators := []string{
+		"...",
+		"\\",
+		"|",
+		"->",
+		"=>",
+	}
+	for _, indicator := range continuationIndicators {
+		if strings.HasSuffix(previousLine, indicator) {
+			return true
+		}
+	}
+
+	// Check if current line starts with continuation indicators
+	startIndicators := []string{
+		"...",
+		"->",
+		"=>",
+		"|",
+	}
+	for _, indicator := range startIndicators {
+		if strings.HasPrefix(currentLine, indicator) {
+			return true
+		}
+	}
+
+	// Check for JSON continuation (starts with comma, bracket, or brace)
+	if strings.HasPrefix(currentLine, ",") ||
+		strings.HasPrefix(currentLine, "{") ||
+		strings.HasPrefix(currentLine, "[") {
+		return true
+	}
+
+	return false
+}
+
 // AnalyzeLogFile performs AI-powered log analysis and RCA generation on a processed log file
 func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, error) {
 	var logFile models.LogFile
@@ -387,7 +1149,7 @@ func (lp *LogProcessor) AnalyzeLogFile(logFileID uint) (*models.LogAnalysis, err
 		// Perform AI analysis
 		aiAnalysis, err := lp.llmService.AnalyzeLogsWithAI(&logFile, logFile.Entries, nil) // No job ID for direct processing
 		if err != nil {
-			log.Printf("AI analysis failed for log file %d: %v", logFileID, err)
+			logger.WithError(err, "log_processor").Error("AI analysis failed for log file")
 			// Continue processing even if AI analysis fails
 		}
 		if err == nil {
@@ -476,130 +1238,192 @@ func (lp *LogProcessor) generateSummary(logFile models.LogFile) string {
 
 // NormalizeToLogEntry maps a parsed log (map[string]interface{}) to the canonical LogEntry struct
 func NormalizeToLogEntry(logFileID uint, parsed map[string]interface{}) models.LogEntry {
-	getString := func(key string) string {
-		if v, ok := parsed[key]; ok {
-			if s, ok := v.(string); ok {
-				return s
-			}
-			// Try to convert other types to string
-			if f, ok := v.(float64); ok {
-				return fmt.Sprintf("%.0f", f)
-			}
-			if i, ok := v.(int); ok {
-				return fmt.Sprintf("%d", i)
-			}
-			if b, ok := v.(bool); ok {
-				return fmt.Sprintf("%t", b)
+	// Apply user-defined parsing rules if available
+	// Note: This would require passing userID to this function
+	// For now, we'll use the built-in synonym mapping
+	// Synonym mapping for canonical fields
+	synonyms := map[string][]string{
+		"timestamp":      {"timestamp", "ts", "time", "date", "datetime", "@timestamp"},
+		"service":        {"service", "svc", "app", "application", "component"},
+		"host":           {"host", "hostname", "node", "server"},
+		"environment":    {"environment", "env", "stage"},
+		"level":          {"level", "severity", "log_level", "lvl", "priority"},
+		"error_code":     {"error_code", "err_code", "code", "errorCode"},
+		"message":        {"message", "msg", "log", "log_message", "text", "body"},
+		"exception":      {"exception", "error", "err", "exc"},
+		"context":        {"context", "ctx"},
+		"tags":           {"tags", "labels"},
+		"correlation_id": {"correlation_id", "corr_id", "correlationID", "trace_id", "traceID"},
+		"metadata":       {"metadata", "meta", "extra", "details"},
+	}
+
+	getString := func(keys ...string) string {
+		for _, key := range keys {
+			if v, ok := parsed[key]; ok {
+				if s, ok := v.(string); ok {
+					return s
+				}
+				// Try to convert other types to string
+				if f, ok := v.(float64); ok {
+					return fmt.Sprintf("%.0f", f)
+				}
+				if i, ok := v.(int); ok {
+					return fmt.Sprintf("%d", i)
+				}
+				if b, ok := v.(bool); ok {
+					return fmt.Sprintf("%t", b)
+				}
 			}
 		}
 		return ""
 	}
-	getStringSlice := func(key string) []string {
-		if v, ok := parsed[key]; ok {
-			if arr, ok := v.([]interface{}); ok {
-				var out []string
-				for _, item := range arr {
-					if s, ok := item.(string); ok {
-						out = append(out, s)
+	getStringSlice := func(keys ...string) []string {
+		for _, key := range keys {
+			if v, ok := parsed[key]; ok {
+				if arr, ok := v.([]interface{}); ok {
+					var out []string
+					for _, item := range arr {
+						if s, ok := item.(string); ok {
+							out = append(out, s)
+						}
 					}
+					return out
 				}
-				return out
-			}
-			if arr, ok := v.([]string); ok {
-				return arr
+				if arr, ok := v.([]string); ok {
+					return arr
+				}
 			}
 		}
 		return nil
 	}
-	getTime := func(key string) time.Time {
-		if v, ok := parsed[key]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				// Try common timestamp formats
-				formats := []string{
-					time.RFC3339Nano,
-					time.RFC3339,
-					"2006-01-02T15:04:05Z07:00",
-					"2006-01-02 15:04:05",
-					"2006-01-02T15:04:05Z",
-					"2006-01-02T15:04:05.000Z",
-					"2006-01-02T15:04:05.000000Z",
-					"2006-01-02 15:04:05.000",
-					"2006-01-02 15:04:05.000000",
-				}
-				for _, format := range formats {
-					t, err := time.Parse(format, s)
-					if err == nil {
-						return t
+	getTime := func(keys ...string) time.Time {
+		for _, key := range keys {
+			if v, ok := parsed[key]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					formats := []string{
+						time.RFC3339Nano,
+						time.RFC3339,
+						"2006-01-02T15:04:05Z07:00",
+						"2006-01-02 15:04:05",
+						"2006-01-02T15:04:05Z",
+						"2006-01-02T15:04:05.000Z",
+						"2006-01-02T15:04:05.000000Z",
+						"2006-01-02 15:04:05.000",
+						"2006-01-02 15:04:05.000000",
 					}
+					for _, format := range formats {
+						t, err := time.Parse(format, s)
+						if err == nil {
+							return t
+						}
+					}
+					logger.WithContext(map[string]interface{}{
+						"timestamp": s,
+						"component": "log_processor",
+					}).Errorf("Failed to parse timestamp: %q", s)
 				}
-				log.Printf("[LOG PROCESSOR] Failed to parse timestamp: %q", s)
 			}
 		}
 		return time.Time{}
 	}
+
 	// Exception
 	exception := models.Exception{}
-	if exc, ok := parsed["exception"].(map[string]interface{}); ok {
-		exception.Type = getStringFromMap(exc, "type")
-		if st, ok := exc["stack_trace"]; ok {
-			if arr, ok := st.([]interface{}); ok {
-				for _, item := range arr {
-					if s, ok := item.(string); ok {
-						exception.StackTrace = append(exception.StackTrace, s)
+	for _, key := range synonyms["exception"] {
+		if exc, ok := parsed[key].(map[string]interface{}); ok {
+			exception.Type = getStringFromMap(exc, "type")
+			if st, ok := exc["stack_trace"]; ok {
+				if arr, ok := st.([]interface{}); ok {
+					for _, item := range arr {
+						if s, ok := item.(string); ok {
+							exception.StackTrace = append(exception.StackTrace, s)
+						}
 					}
 				}
 			}
+			break
 		}
 	}
 	// Context
 	context := models.Context{}
-	if ctx, ok := parsed["context"].(map[string]interface{}); ok {
-		context.TransactionId = getStringFromMap(ctx, "transaction_id")
-		context.UserId = getStringFromMap(ctx, "user_id")
-		if req, ok := ctx["request"].(map[string]interface{}); ok {
-			context.Request.Method = getStringFromMap(req, "method")
-			context.Request.Url = getStringFromMap(req, "url")
-			context.Request.Ip = getStringFromMap(req, "ip")
-		}
-		if cf, ok := ctx["custom_fields"].(map[string]interface{}); ok {
-			if v, ok := cf["retry_attempt"].(float64); ok {
-				context.CustomFields.RetryAttempt = int(v)
+	for _, key := range synonyms["context"] {
+		if ctx, ok := parsed[key].(map[string]interface{}); ok {
+			context.TransactionId = getStringFromMap(ctx, "transaction_id")
+			context.UserId = getStringFromMap(ctx, "user_id")
+			if req, ok := ctx["request"].(map[string]interface{}); ok {
+				context.Request.Method = getStringFromMap(req, "method")
+				context.Request.Url = getStringFromMap(req, "url")
+				context.Request.Ip = getStringFromMap(req, "ip")
 			}
-			context.CustomFields.DatabaseName = getStringFromMap(cf, "database_name")
+			if cf, ok := ctx["custom_fields"].(map[string]interface{}); ok {
+				if v, ok := cf["retry_attempt"].(float64); ok {
+					context.CustomFields.RetryAttempt = int(v)
+				}
+				context.CustomFields.DatabaseName = getStringFromMap(cf, "database_name")
+			}
+			break
 		}
 	}
 
-	// Extract metadata field if present
+	// Extract metadata field if present, or fallback to unmapped fields
 	var logMetadata map[string]interface{}
-	if meta, ok := parsed["metadata"].(map[string]interface{}); ok {
-		logMetadata = meta
+	for _, key := range synonyms["metadata"] {
+		if meta, ok := parsed[key].(map[string]interface{}); ok {
+			logMetadata = meta
+			break
+		}
+	}
+	if logMetadata == nil {
+		// Only extract unmapped fields as metadata if there's no explicit metadata field
+		logMetadata = extractMetadata(parsed)
+	}
+
+	// Canonical field extraction with synonym fallback
+	timestamp := getTime(synonyms["timestamp"]...)
+	service := getString(synonyms["service"]...)
+	host := getString(synonyms["host"]...)
+	environment := getString(synonyms["environment"]...)
+	levelRaw := getString(synonyms["level"]...)
+	errorCode := getString(synonyms["error_code"]...)
+	message := getString(synonyms["message"]...)
+	tags := getStringSlice(synonyms["tags"]...)
+	correlationId := getString(synonyms["correlation_id"]...)
+
+	// Normalize log level
+	level := strings.ToUpper(strings.TrimSpace(levelRaw))
+	switch level {
+	case "DEBUG", "DBG", "TRACE":
+		level = "DEBUG"
+	case "INFO", "INF", "NOTICE":
+		level = "INFO"
+	case "WARN", "WARNING", "WARNG":
+		level = "WARN"
+	case "ERROR", "ERR":
+		level = "ERROR"
+	case "FATAL", "CRITICAL", "CRIT":
+		level = "FATAL"
+	default:
+		if level == "" {
+			level = "INFO"
+		} else {
+			level = levelRaw // fallback to original if unknown
+		}
 	}
 
 	entry := models.LogEntry{
 		LogFileID:     logFileID,
-		Timestamp:     getTime("timestamp"),
-		Service:       getString("service"),
-		Host:          getString("host"),
-		Environment:   getString("environment"),
-		Level:         getString("level"),
-		ErrorCode:     getString("error_code"),
-		Message:       getString("message"),
+		Timestamp:     timestamp,
+		Service:       service,
+		Host:          host,
+		Environment:   environment,
+		Level:         level,
+		ErrorCode:     errorCode,
+		Message:       message,
 		Exception:     exception,
 		Context:       context,
-		Tags:          getStringSlice("tags"),
-		CorrelationId: getString("correlation_id"),
-		Metadata:      logMetadata, // Use the metadata field from the JSON
-	}
-
-	// Debug: Log if any critical fields are empty
-	if entry.Timestamp.IsZero() {
-		log.Printf("[LOG PROCESSOR] Warning: Timestamp is zero for entry")
-	}
-	if entry.Level == "" {
-		log.Printf("[LOG PROCESSOR] Warning: Level is empty for entry")
-	}
-	if entry.Message == "" {
-		log.Printf("[LOG PROCESSOR] Warning: Message is empty for entry")
+		Tags:          tags,
+		CorrelationId: correlationId,
+		Metadata:      logMetadata, // Use the metadata field from the JSON or fallback
 	}
 
 	return entry

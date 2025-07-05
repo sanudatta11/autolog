@@ -9,8 +9,13 @@ import (
 	"time"
 
 	"github.com/autolog/backend/internal/db"
+	"github.com/autolog/backend/internal/logger"
+	"github.com/autolog/backend/internal/middleware"
 	"github.com/autolog/backend/internal/models"
 	"github.com/autolog/backend/internal/routes"
+
+	"os/signal"
+	"syscall"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -36,14 +41,27 @@ func CORSMiddleware() gin.HandlerFunc {
 }
 
 func main() {
+	// Initialize logger first
+	logger.Initialize()
+
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using system environment variables")
+		logger.Warn("No .env file found, using environment variables", nil)
 	}
 
 	// Connect to database
 	db.Connect()
 	db.AutoMigrate()
+
+	// Setup graceful shutdown
+	stopChan := make(chan struct{})
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigChan
+		logger.Warn("Received shutdown signal, stopping background workers...", nil)
+		close(stopChan)
+	}()
 
 	// Seed database with initial data if in development
 	if os.Getenv("ENV") == "development" {
@@ -54,16 +72,18 @@ func main() {
 	}
 
 	// Set Gin mode
-	if os.Getenv("ENV") == "production" {
+	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Create router
-	r := gin.Default()
+	// Create router without default middleware
+	r := gin.New()
 
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 
+	// Use our custom logging middleware instead of gin.Default()
+	r.Use(middleware.CustomLoggerMiddleware())
 	r.Use(CORSMiddleware())
 	r.Use(gin.Recovery())
 
@@ -117,7 +137,7 @@ func main() {
 	})
 
 	// Setup routes
-	routes.SetupRoutes(r, db.DB)
+	routes.SetupRoutes(r, db.DB, stopChan)
 
 	// Start server
 	port := os.Getenv("PORT")
@@ -125,9 +145,15 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("Server starting on port %s", port)
+	logger.Info("Starting AutoLog backend server", map[string]interface{}{
+		"port":     port,
+		"gin_mode": gin.Mode(),
+	})
+
 	if err := r.Run(":" + port); err != nil {
-		log.Fatal("Failed to start server:", err)
+		logger.Fatal("Failed to start server", map[string]interface{}{
+			"error": err.Error(),
+		})
 	}
 }
 

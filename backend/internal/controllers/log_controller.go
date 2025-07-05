@@ -2,13 +2,13 @@ package controllers
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/autolog/backend/internal/logger"
 	"github.com/autolog/backend/internal/models"
 	"github.com/autolog/backend/internal/services"
 	"github.com/gin-gonic/gin"
@@ -21,16 +21,22 @@ type LogController struct {
 	llmService   *services.LLMService
 	jobService   *services.JobService
 	uploadDir    string
+	stopChan     <-chan struct{} // Add stopChan for graceful shutdown
 }
 
-func NewLogController(db *gorm.DB, llmService *services.LLMService) *LogController {
+func NewLogController(db *gorm.DB, llmService *services.LLMService, stopChan <-chan struct{}) *LogController {
 	jobService := services.NewJobService(db, llmService)
+	logger.Info("LogController initialized", map[string]interface{}{
+		"upload_dir": "uploads/logs",
+		"component":  "log_controller",
+	})
 	return &LogController{
 		db:           db,
 		logProcessor: services.NewLogProcessor(db, llmService),
 		llmService:   llmService,
 		jobService:   jobService,
 		uploadDir:    "uploads/logs",
+		stopChan:     stopChan,
 	}
 }
 
@@ -38,25 +44,44 @@ func NewLogController(db *gorm.DB, llmService *services.LLMService) *LogControll
 func (lc *LogController) UploadLogFile(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to upload log file", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Info("Log file upload request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	file, err := c.FormFile("logfile")
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("No file uploaded")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
 		return
 	}
 
+	logEntry.Info("File received for upload", map[string]interface{}{
+		"filename": file.Filename,
+		"size":     file.Size,
+	})
+
 	// Validate file extension
 	ext := filepath.Ext(file.Filename)
 	if ext != ".json" && ext != ".log" && ext != ".txt" {
+		logEntry.Warn("Invalid file extension", map[string]interface{}{
+			"filename":     file.Filename,
+			"extension":    ext,
+			"allowed_exts": []string{".json", ".log", ".txt"},
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Only JSON, LOG, and TXT files are supported"})
 		return
 	}
 
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(lc.uploadDir, 0755); err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to create upload directory")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
 		return
 	}
@@ -66,8 +91,15 @@ func (lc *LogController) UploadLogFile(c *gin.Context) {
 	filename := fmt.Sprintf("%d_%s", timestamp, file.Filename)
 	filepath := filepath.Join(lc.uploadDir, filename)
 
+	logEntry.Debug("Saving uploaded file", map[string]interface{}{
+		"original_filename": file.Filename,
+		"stored_filename":   filename,
+		"file_path":         filepath,
+	})
+
 	// Save file
 	if err := c.SaveUploadedFile(file, filepath); err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to save uploaded file")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
 		return
 	}
@@ -83,19 +115,31 @@ func (lc *LogController) UploadLogFile(c *gin.Context) {
 	if err := lc.db.Create(&logFile).Error; err != nil {
 		// Clean up file if database save fails
 		os.Remove(filepath)
+		logger.WithError(err, "log_controller").Error("Failed to save log file record to database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save log file record"})
 		return
 	}
 
+	logEntry.Info("Log file record created", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"filename":    logFile.Filename,
+		"status":      logFile.Status,
+	})
+
 	// Process log file in background
 	go func() {
-		log.Printf("[UPLOAD] Starting background processing for log file %d: %s", logFile.ID, filepath)
-		if err := lc.logProcessor.ProcessLogFile(logFile.ID, filepath); err != nil {
-			log.Printf("[UPLOAD] Failed to process log file %d: %v", logFile.ID, err)
+		logEntry.Info("Starting background processing", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"file_path":   filepath,
+		})
+		if err := lc.logProcessor.ProcessLogFileWithShutdown(logFile.ID, filepath, lc.stopChan); err != nil {
+			logger.WithError(err, "log_controller").Error("Failed to process log file in background")
 			// Update status to failed
 			lc.db.Model(&models.LogFile{}).Where("id = ?", logFile.ID).Update("status", "failed")
 		} else {
-			log.Printf("[UPLOAD] Successfully processed log file %d", logFile.ID)
+			logEntry.Info("Successfully processed log file in background", map[string]interface{}{
+				"log_file_id": logFile.ID,
+			})
 		}
 	}()
 
@@ -109,9 +153,16 @@ func (lc *LogController) UploadLogFile(c *gin.Context) {
 func (lc *LogController) GetLogFiles(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get log files", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
+
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get log files request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
 
 	var logFiles []models.LogFile
 	query := lc.db.Where("uploaded_by = ?", userID).Order("created_at DESC")
@@ -124,6 +175,7 @@ func (lc *LogController) GetLogFiles(c *gin.Context) {
 	query = query.Offset(offset).Limit(limit)
 
 	if err := query.Find(&logFiles).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to fetch log files from database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log files"})
 		return
 	}
@@ -131,6 +183,13 @@ func (lc *LogController) GetLogFiles(c *gin.Context) {
 	// Get total count
 	var total int64
 	lc.db.Model(&models.LogFile{}).Where("uploaded_by = ?", userID).Count(&total)
+
+	logEntry.Info("Log files retrieved successfully", map[string]interface{}{
+		"count": len(logFiles),
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"logFiles": logFiles,
@@ -146,12 +205,20 @@ func (lc *LogController) GetLogFiles(c *gin.Context) {
 func (lc *LogController) GetLogFile(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get log file details", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get log file details request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -159,8 +226,10 @@ func (lc *LogController) GetLogFile(c *gin.Context) {
 	var logFile models.LogFile
 	if err := lc.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Log file not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch log file from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
 		}
 		return
@@ -168,9 +237,19 @@ func (lc *LogController) GetLogFile(c *gin.Context) {
 
 	// Check if user owns this log file
 	if logFile.UploadedBy != userID.(uint) {
+		logEntry.Warn("Access denied for log file", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
+
+	logEntry.Info("Log file details retrieved successfully", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"filename":    logFile.Filename,
+		"status":      logFile.Status,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"logFile": logFile})
 }
@@ -179,12 +258,20 @@ func (lc *LogController) GetLogFile(c *gin.Context) {
 func (lc *LogController) GetRCAJobStatus(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get RCA job status", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get RCA job status request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	jobID, err := strconv.ParseUint(c.Param("jobId"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid job ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
 		return
 	}
@@ -193,8 +280,10 @@ func (lc *LogController) GetRCAJobStatus(c *gin.Context) {
 	job, err := lc.jobService.GetJobStatus(uint(jobID))
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Job not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch job status from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch job status"})
 		}
 		return
@@ -202,9 +291,18 @@ func (lc *LogController) GetRCAJobStatus(c *gin.Context) {
 
 	// Check if user owns this log file
 	if job.LogFile != nil && job.LogFile.UploadedBy != userID.(uint) {
+		logEntry.Warn("Access denied for RCA job status", map[string]interface{}{
+			"job_id":  job.ID,
+			"user_id": userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
+
+	logEntry.Info("RCA job status retrieved successfully", map[string]interface{}{
+		"job_id": job.ID,
+		"status": job.Status,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"job":          job,
@@ -218,12 +316,20 @@ func (lc *LogController) GetRCAJobStatus(c *gin.Context) {
 func (lc *LogController) GetRCAResults(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get RCA analysis results", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get RCA analysis results request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -232,35 +338,54 @@ func (lc *LogController) GetRCAResults(c *gin.Context) {
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Log file not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch log file from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
 		}
 		return
 	}
 
 	if logFile.UploadedBy != userID.(uint) {
+		logEntry.Warn("Access denied for RCA analysis results", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
 	// Check if RCA analysis is completed
 	if logFile.RCAAnalysisStatus != "completed" {
+		logEntry.Warn("RCA analysis not completed for log file", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"status":      logFile.RCAAnalysisStatus,
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "RCA analysis not completed"})
 		return
 	}
 
 	// Get the completed job
 	if logFile.RCAAnalysisJobID == nil {
+		logEntry.Warn("RCA analysis job not found for log file", map[string]interface{}{
+			"log_file_id": logFile.ID,
+		})
 		c.JSON(http.StatusNotFound, gin.H{"error": "RCA analysis job not found"})
 		return
 	}
 
 	var job models.Job
 	if err := lc.db.First(&job, *logFile.RCAAnalysisJobID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("RCA analysis job not found")
 		c.JSON(http.StatusNotFound, gin.H{"error": "RCA analysis job not found"})
 		return
 	}
+
+	logEntry.Info("RCA analysis results retrieved successfully", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"analysis_id": job.ID,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"analysis": job.Result,
@@ -272,18 +397,30 @@ func (lc *LogController) GetRCAResults(c *gin.Context) {
 func (lc *LogController) GetAdminLogs(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get admin logs", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get admin logs request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	// Check if user is admin
 	var user models.User
 	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
 
 	if user.Role != "ADMIN" {
+		logEntry.Warn("Admin access required for admin logs", map[string]interface{}{
+			"user_id": user.ID,
+			"role":    user.Role,
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
 		return
 	}
@@ -291,9 +428,14 @@ func (lc *LogController) GetAdminLogs(c *gin.Context) {
 	// Get recent logs (last 100 entries)
 	var entries []models.LogEntry
 	if err := lc.db.Order("created_at DESC").Limit(100).Find(&entries).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to fetch logs from database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch logs"})
 		return
 	}
+
+	logEntry.Info("Admin logs retrieved successfully", map[string]interface{}{
+		"count": len(entries),
+	})
 
 	c.JSON(http.StatusOK, gin.H{"logs": entries})
 }
@@ -302,12 +444,20 @@ func (lc *LogController) GetAdminLogs(c *gin.Context) {
 func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to analyze log file", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Analyze log file request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -327,16 +477,25 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 	// Check if user owns this log file
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Log file not found")
 		c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		return
 	}
 	if logFile.UploadedBy != userID {
+		logEntry.Warn("Access denied for log file analysis", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID,
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
 		return
 	}
 
 	// Check if file is being processed or RCA is running
 	if logFile.Status == "processing" || logFile.RCAAnalysisStatus == "pending" || logFile.RCAAnalysisStatus == "running" {
+		logEntry.Warn("Cannot delete a log file that is currently processing or has RCA analysis in progress", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"status":      logFile.Status,
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete a log file that is currently processing or has RCA analysis in progress."})
 		return
 	}
@@ -344,10 +503,13 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 	// Create and process RCA job with options
 	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to create RCA analysis job", map[string]interface{}{
+			"log_file_id": logFile.ID,
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	go lc.jobService.ProcessRCAAnalysisJobWithOptions(job.ID, opts.Timeout, opts.Chunking)
+	go lc.jobService.ProcessRCAAnalysisJobWithShutdown(job.ID, lc.stopChan)
 	c.JSON(http.StatusAccepted, gin.H{"jobId": job.ID})
 }
 
@@ -355,12 +517,20 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get detailed error analysis", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get detailed error analysis request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -369,20 +539,30 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 	var logFile models.LogFile
 	if err := lc.db.Preload("Entries").First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Log file not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch log file from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
 		}
 		return
 	}
 
 	if logFile.UploadedBy != userID.(uint) {
+		logEntry.Warn("Access denied for detailed error analysis", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
 	// Check if log file is processed
 	if logFile.Status != "completed" {
+		logEntry.Warn("Log file not yet processed for detailed error analysis", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"status":      logFile.Status,
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Log file not yet processed"})
 		return
 	}
@@ -390,6 +570,9 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 	// Get detailed error analysis
 	errorAnalysis, err := lc.llmService.AnalyzeLogsWithAI(&logFile, logFile.Entries, nil) // No job ID for direct analysis
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("AI analysis failed", map[string]interface{}{
+			"log_file_id": logFile.ID,
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("AI analysis failed: %v", err)})
 		return
 	}
@@ -401,6 +584,11 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 			errorEntries = append(errorEntries, entry)
 		}
 	}
+
+	logEntry.Info("Detailed error analysis retrieved successfully", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"error_count": len(errorEntries),
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"logFile":       logFile.Filename,
@@ -414,9 +602,16 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 func (lc *LogController) GetLLMStatus(c *gin.Context) {
 	_, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get LLM status", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
+
+	logEntry := logger.WithUser(0) // No user context for this endpoint
+	logEntry.Debug("Get LLM status request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
 
 	// Check LLM health
 	healthError := lc.llmService.CheckLLMHealth()
@@ -432,6 +627,15 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 		status = "unhealthy"
 	}
 
+	logEntry.Info("LLM status retrieved successfully", map[string]interface{}{
+		"status":           status,
+		"health_error":     healthError,
+		"current_model":    currentModel,
+		"available_models": models,
+		"models_error":     modelsError,
+		"ollama_url":       "http://localhost:11434",
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":          status,
 		"healthError":     healthError,
@@ -446,12 +650,20 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get log analyses", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get log analyses request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -460,14 +672,20 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Log file not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch log file from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
 		}
 		return
 	}
 
 	if logFile.UploadedBy != userID.(uint) {
+		logEntry.Warn("Access denied for log analyses", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
@@ -475,6 +693,7 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 	// Get RCA analysis jobs for this log file
 	var jobs []models.Job
 	if err := lc.db.Where("log_file_id = ? AND type = ?", logFileID, "rca_analysis").Order("created_at DESC").Find(&jobs).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to fetch analyses from database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch analyses"})
 		return
 	}
@@ -508,6 +727,11 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 		analyses = append(analyses, analysis)
 	}
 
+	logEntry.Info("Log analyses retrieved successfully", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"count":       len(analyses),
+	})
+
 	c.JSON(http.StatusOK, gin.H{"analyses": analyses})
 }
 
@@ -515,12 +739,20 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 func (lc *LogController) DeleteLogFile(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to delete log file", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Delete log file request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -529,20 +761,30 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Log file not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch log file from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
 		}
 		return
 	}
 
 	if logFile.UploadedBy != userID.(uint) {
+		logEntry.Warn("Access denied for log file deletion", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
 	// Check if file is being processed or RCA is running
 	if logFile.Status == "processing" || logFile.RCAAnalysisStatus == "pending" || logFile.RCAAnalysisStatus == "running" {
+		logEntry.Warn("Cannot delete a log file that is currently processing or has RCA analysis in progress", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"status":      logFile.Status,
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete a log file that is currently processing or has RCA analysis in progress."})
 		return
 	}
@@ -562,18 +804,21 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 		// 1. Delete all jobs for this log file
 		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.Job{}).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete analysis jobs")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
 			return
 		}
 		// 2. Delete all log entries for this log file
 		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.LogEntry{}).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete log entries")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
 			return
 		}
 		// 3. Delete all log analyses for this log file
 		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.LogAnalysis{}).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete log analyses")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log analyses"})
 			return
 		}
@@ -591,6 +836,7 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 			// 6. Delete the analysis memories themselves
 			if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogAnalysisMemory{}).Error; err != nil {
 				tx.Rollback()
+				logger.WithError(err, "log_controller").Error("Failed to delete log analysis memories")
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log analysis memories"})
 				return
 			}
@@ -598,6 +844,7 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 		// 7. Delete the log file itself
 		if err := tx.Delete(&logFile).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete log file")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
 			return
 		}
@@ -605,25 +852,33 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 		// SOFT DELETE: Only remove jobs, log entries, and the log file
 		if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.Job{}).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete analysis jobs")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
 			return
 		}
 		if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogEntry{}).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete log entries")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
 			return
 		}
 		if err := tx.Delete(&logFile).Error; err != nil {
 			tx.Rollback()
+			logger.WithError(err, "log_controller").Error("Failed to delete log file")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
 			return
 		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to commit transaction")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
 		return
 	}
+
+	logEntry.Info("Log file deleted successfully", map[string]interface{}{
+		"log_file_id": logFile.ID,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"message": "Log file deleted successfully"})
 }
@@ -632,23 +887,39 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 func (lc *LogController) GetLLMAPICalls(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get LLM API calls", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get LLM API calls request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	// Check if user is admin
 	var user models.User
 	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
 
 	if user.Role != "ADMIN" {
+		logEntry.Warn("Admin access required for LLM API calls", map[string]interface{}{
+			"user_id": user.ID,
+			"role":    user.Role,
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
 		return
 	}
 
 	apiCalls := lc.llmService.GetAPICalls()
+	logEntry.Info("LLM API calls retrieved successfully", map[string]interface{}{
+		"count": len(apiCalls),
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"apiCalls": apiCalls,
 		"count":    len(apiCalls),
@@ -659,23 +930,36 @@ func (lc *LogController) GetLLMAPICalls(c *gin.Context) {
 func (lc *LogController) ClearLLMAPICalls(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to clear LLM API calls", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Clear LLM API calls request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	// Check if user is admin
 	var user models.User
 	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
 
 	if user.Role != "ADMIN" {
+		logEntry.Warn("Admin access required to clear LLM API calls", map[string]interface{}{
+			"user_id": user.ID,
+			"role":    user.Role,
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
 		return
 	}
 
 	lc.llmService.ClearAPICalls()
+	logEntry.Info("LLM API call history cleared")
 	c.JSON(http.StatusOK, gin.H{"message": "LLM API call history cleared"})
 }
 
@@ -689,12 +973,14 @@ type FeedbackRequest struct {
 func (lc *LogController) AddFeedback(c *gin.Context) {
 	var req FeedbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Error("Invalid feedback request payload", nil)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	analysisID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid analysis ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid analysis ID"})
 		return
 	}
@@ -714,9 +1000,15 @@ func (lc *LogController) AddFeedback(c *gin.Context) {
 	}
 
 	if err := lc.db.Create(&feedback).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to store feedback to database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store feedback"})
 		return
 	}
+
+	logger.Info("Feedback submitted successfully", map[string]interface{}{
+		"analysis_memory_id": feedback.AnalysisMemoryID,
+		"user_id":            feedback.UserID,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"message": "Feedback submitted successfully"})
 }
@@ -725,14 +1017,20 @@ func (lc *LogController) AddFeedback(c *gin.Context) {
 func (lc *LogController) GetFeedbackForAnalysis(c *gin.Context) {
 	analysisID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid analysis ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid analysis ID"})
 		return
 	}
 	var feedbacks []models.LogAnalysisFeedback
 	if err := lc.db.Where("analysis_memory_id = ?", analysisID).Order("created_at DESC").Find(&feedbacks).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to fetch feedback from database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch feedback"})
 		return
 	}
+	logger.Info("Feedback retrieved successfully", map[string]interface{}{
+		"analysis_memory_id": analysisID,
+		"count":              len(feedbacks),
+	})
 	c.JSON(http.StatusOK, gin.H{"feedback": feedbacks})
 }
 
@@ -740,9 +1038,13 @@ func (lc *LogController) GetFeedbackForAnalysis(c *gin.Context) {
 func (lc *LogController) ExportAllFeedback(c *gin.Context) {
 	var feedbacks []models.LogAnalysisFeedback
 	if err := lc.db.Order("created_at DESC").Find(&feedbacks).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to fetch feedback from database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch feedback"})
 		return
 	}
+	logger.Info("All feedback retrieved successfully", map[string]interface{}{
+		"count": len(feedbacks),
+	})
 	c.JSON(http.StatusOK, gin.H{"feedback": feedbacks})
 }
 
@@ -750,12 +1052,20 @@ func (lc *LogController) ExportAllFeedback(c *gin.Context) {
 func (lc *LogController) GetAllRCAJobs(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get all RCA jobs", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get all RCA jobs request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	logFileID, err := strconv.ParseUint(c.Param("logFileId"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -763,10 +1073,15 @@ func (lc *LogController) GetAllRCAJobs(c *gin.Context) {
 	// Check if user owns this log file
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Log file not found")
 		c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		return
 	}
 	if logFile.UploadedBy != userID {
+		logEntry.Warn("Access denied for RCA jobs", map[string]interface{}{
+			"log_file_id": logFile.ID,
+			"user_id":     userID.(uint),
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
 		return
 	}
@@ -774,9 +1089,15 @@ func (lc *LogController) GetAllRCAJobs(c *gin.Context) {
 	// Fetch all jobs for this log file, most recent first
 	var jobs []models.Job
 	if err := lc.db.Where("log_file_id = ?", logFileID).Order("created_at desc").Find(&jobs).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to fetch jobs from database")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch jobs"})
 		return
 	}
+
+	logEntry.Info("All RCA jobs retrieved successfully", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"count":       len(jobs),
+	})
 
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
 }
@@ -786,24 +1107,37 @@ func (lc *LogController) GetLogFileDetails(c *gin.Context) {
 	// Check if user is admin
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get log file details for admin", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get log file details for admin request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	// Get user to check if admin
 	var user models.User
 	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
 
 	if user.Role != "admin" {
+		logEntry.Warn("Admin access required for log file details", map[string]interface{}{
+			"user_id": user.ID,
+			"role":    user.Role,
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
 		return
 	}
 
 	logFileID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid log file ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid log file ID"})
 		return
 	}
@@ -811,12 +1145,18 @@ func (lc *LogController) GetLogFileDetails(c *gin.Context) {
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Log file not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Log file not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch log file from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch log file"})
 		}
 		return
 	}
+	logger.Info("Log file details retrieved successfully for admin", map[string]interface{}{
+		"log_file_id": logFile.ID,
+		"filename":    logFile.Filename,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"logFile": logFile})
 }
@@ -826,24 +1166,37 @@ func (lc *LogController) GetJobDetails(c *gin.Context) {
 	// Check if user is admin
 	userID, exists := c.Get("userID")
 	if !exists {
+		logger.Error("Unauthorized access attempt to get job details for admin", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get job details for admin request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
 	// Get user to check if admin
 	var user models.User
 	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
 
 	if user.Role != "admin" {
+		logEntry.Warn("Admin access required for job details", map[string]interface{}{
+			"user_id": user.ID,
+			"role":    user.Role,
+		})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
 		return
 	}
 
 	jobID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
+		logger.WithError(err, "log_controller").Error("Invalid job ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
 		return
 	}
@@ -851,12 +1204,19 @@ func (lc *LogController) GetJobDetails(c *gin.Context) {
 	job, err := lc.jobService.GetJobStatus(uint(jobID))
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
+			logger.WithError(err, "log_controller").Error("Job not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		} else {
+			logger.WithError(err, "log_controller").Error("Failed to fetch job from database")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch job"})
 		}
 		return
 	}
+
+	logEntry.Info("Job details retrieved successfully for admin", map[string]interface{}{
+		"job_id": job.ID,
+		"status": job.Status,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"job": job})
 }

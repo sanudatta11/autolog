@@ -34,4 +34,28 @@ api.interceptors.response.use(
   }
 )
 
+// Parsing Rules API
+export const parsingRulesAPI = {
+  // Get all parsing rules for the current user
+  getUserParsingRules: () => api.get('/api/v1/parsing-rules'),
+  
+  // Get a specific parsing rule
+  getParsingRule: (id) => api.get(`/api/v1/parsing-rules/${id}`),
+  
+  // Create a new parsing rule
+  createParsingRule: (rule) => api.post('/api/v1/parsing-rules', rule),
+  
+  // Update an existing parsing rule
+  updateParsingRule: (id, rule) => api.put(`/api/v1/parsing-rules/${id}`, rule),
+  
+  // Delete a parsing rule
+  deleteParsingRule: (id) => api.delete(`/api/v1/parsing-rules/${id}`),
+  
+  // Test a parsing rule against sample logs
+  testParsingRule: (rule, sampleLogs) => api.post('/api/v1/parsing-rules/test', { rule, sampleLogs }),
+  
+  // Get active parsing rules
+  getActiveParsingRules: () => api.get('/api/v1/parsing-rules/active'),
+}
+
 export default api 

@@ -265,6 +265,152 @@ func (js *JobService) ProcessRCAAnalysisJobWithOptions(jobID uint, timeout int, 
 	log.Printf("RCA analysis completed for job %d", jobID)
 }
 
+// ProcessRCAAnalysisJobWithShutdown processes an RCA analysis job with shutdown support
+func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-chan struct{}) {
+	completed := false
+	defer func() {
+		if !completed {
+			js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+				"status": models.JobStatusFailed,
+				"error":  "Job failed due to shutdown or unexpected exit",
+			})
+		}
+	}()
+
+	// Update job status to running
+	now := time.Now()
+	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+		"status":     models.JobStatusRunning,
+		"started_at": &now,
+		"progress":   10,
+	}).Error; err != nil {
+		log.Printf("Failed to update job status to running: %v", err)
+		return
+	}
+
+	// Get job details
+	var job models.Job
+	if err := js.db.Preload("LogFile").First(&job, jobID).Error; err != nil {
+		log.Printf("Failed to get job details: %v", err)
+		js.updateJobStatus(jobID, models.JobStatusFailed, "Failed to get job details", nil)
+		return
+	}
+
+	// Check for shutdown before starting
+	select {
+	case <-stopChan:
+		return
+	default:
+	}
+
+	// Update progress
+	js.updateJobProgress(jobID, 20)
+
+	// Check LLM health before starting analysis
+	if err := js.llmService.CheckLLMHealth(); err != nil {
+		log.Printf("LLM health check failed: %v", err)
+		js.updateJobStatus(jobID, models.JobStatusFailed, fmt.Sprintf("LLM service unavailable: %v", err), nil)
+		return
+	}
+
+	// Check for shutdown before analysis
+	select {
+	case <-stopChan:
+		return
+	default:
+	}
+
+	// Perform RCA analysis in chunks with error tracking
+	var failedChunk int = -1
+	var totalChunks int
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID)
+	if err != nil {
+		log.Printf("RCA analysis failed: %v", err)
+		failMsg := err.Error()
+		if failedChunk > 0 {
+			failMsg = fmt.Sprintf("Chunk %d failed: %s", failedChunk, failMsg)
+		}
+		js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+			"failed_chunk": failedChunk,
+			"total_chunks": totalChunks,
+		})
+		js.updateJobStatus(jobID, models.JobStatusFailed, failMsg, map[string]interface{}{
+			"failedChunk": failedChunk,
+			"totalChunks": totalChunks,
+		})
+		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
+		return
+	}
+	js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", totalChunks)
+
+	// Store partial results in job.Result
+	result := map[string]interface{}{
+		"partials": partials,
+	}
+	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("result", result).Error; err != nil {
+		log.Printf("Failed to store partial RCA results: %v", err)
+	}
+
+	// Update progress after each chunk
+	for i := range partials {
+		progress := 20 + int(float64(i+1)/float64(len(partials))*60) // 20-80%
+		js.updateJobProgress(jobID, progress)
+		// Check for shutdown between chunks
+		select {
+		case <-stopChan:
+			return
+		default:
+		}
+	}
+
+	// (Aggregation step)
+	js.updateJobProgress(jobID, 85)
+
+	// Check for shutdown before aggregation
+	select {
+	case <-stopChan:
+		return
+	default:
+	}
+
+	// Aggregate partials into a final RCA report using LLM
+	var rawLLMResponse string
+	aggregated, rawResp, err := js.aggregatePartialAnalysesWithRaw(job.LogFile, partials)
+	if err != nil {
+		log.Printf("RCA aggregation failed: %v", err)
+		js.updateJobStatus(jobID, models.JobStatusFailed, err.Error(), nil)
+		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
+		return
+	}
+	log.Printf("[RCA] Raw LLM aggregation response: %s", rawResp)
+	rawLLMResponse = rawResp
+
+	// Store final RCA in job.Result
+	finalResult := map[string]interface{}{
+		"partials":       partials,
+		"final":          aggregated,
+		"rawLLMResponse": rawLLMResponse,
+	}
+	completedAt := time.Now()
+	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+		"status":       models.JobStatusCompleted,
+		"progress":     100,
+		"result":       finalResult,
+		"completed_at": &completedAt,
+	}).Error; err != nil {
+		log.Printf("Failed to update job completion: %v", err)
+		return
+	}
+
+	// Update log file status
+	if err := js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "completed").Error; err != nil {
+		log.Printf("Failed to update log file status: %v", err)
+	}
+
+	completed = true
+	log.Printf("RCA analysis completed for job %d", jobID)
+}
+
 func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {

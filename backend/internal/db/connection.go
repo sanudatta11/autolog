@@ -101,7 +101,7 @@ func AutoMigrate() {
 
 	// Then add LogFile
 	log.Println("Testing migration with LogFile model...")
-	err = DB.AutoMigrate(&models.LogFile{})
+	err = DB.AutoMigrate(&models.LogFile{}) // Includes ParseError field
 	if err != nil {
 		log.Printf("LogFile migration failed: %v", err)
 		return
@@ -110,16 +110,6 @@ func AutoMigrate() {
 
 	// Then add LogEntry
 	log.Println("Testing migration with LogEntry model...")
-	// Drop old log_entries table if it exists
-	db, err := DB.DB()
-	if err == nil {
-		_, dropErr := db.Exec("DROP TABLE IF EXISTS log_entries CASCADE;")
-		if dropErr != nil {
-			log.Printf("Warning: failed to drop old log_entries table: %v", dropErr)
-		} else {
-			log.Println("Dropped old log_entries table.")
-		}
-	}
 	err = DB.AutoMigrate(&models.LogEntry{})
 	if err != nil {
 		log.Printf("LogEntry migration failed: %v", err)
@@ -152,6 +142,47 @@ func AutoMigrate() {
 		return
 	}
 	log.Println("✅ LogAnalysisFeedback table migrated successfully")
+
+	// Add parsing rule models
+	log.Println("Testing migration with ParsingRule model...")
+	err = DB.AutoMigrate(&models.ParsingRule{})
+	if err != nil {
+		log.Printf("ParsingRule migration failed: %v", err)
+		return
+	}
+	log.Println("✅ ParsingRule table migrated successfully")
+
+	log.Println("Testing migration with FieldMapping model...")
+	err = DB.AutoMigrate(&models.FieldMapping{})
+	if err != nil {
+		log.Printf("FieldMapping migration failed: %v", err)
+		return
+	}
+	log.Println("✅ FieldMapping table migrated successfully")
+
+	log.Println("Testing migration with RegexPattern model...")
+	err = DB.AutoMigrate(&models.RegexPattern{})
+	if err != nil {
+		log.Printf("RegexPattern migration failed: %v", err)
+		return
+	}
+	log.Println("✅ RegexPattern table migrated successfully")
+
+	log.Println("Testing migration with ParsingRuleTemplate model...")
+	err = DB.AutoMigrate(&models.ParsingRuleTemplate{})
+	if err != nil {
+		log.Printf("ParsingRuleTemplate migration failed: %v", err)
+		return
+	}
+	log.Println("✅ ParsingRuleTemplate table migrated successfully")
+
+	log.Println("Testing migration with ParsingRuleUsage model...")
+	err = DB.AutoMigrate(&models.ParsingRuleUsage{})
+	if err != nil {
+		log.Printf("ParsingRuleUsage migration failed: %v", err)
+		return
+	}
+	log.Println("✅ ParsingRuleUsage table migrated successfully")
 
 	log.Println("✅ All database migrations completed successfully")
 }

@@ -8,6 +8,7 @@ import Users from './pages/Users'
 import Logs from './pages/Logs'
 import LLMStatus from './pages/LLMStatus'
 import FeedbackReview from './pages/FeedbackReview'
+import ParsingRules from './pages/ParsingRules'
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -27,6 +28,7 @@ function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="users" element={<Users />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="parsing-rules" element={<ParsingRules />} />
         <Route path="llm-status" element={<LLMStatus />} />
         <Route path="feedback-review" element={<FeedbackReview />} />
       </Route>
