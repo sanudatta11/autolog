@@ -67,6 +67,38 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 		return
 	}
 
+	// Check if RCA is possible for this log file
+	if job.LogFile != nil && !job.LogFile.IsRCAPossible {
+		logger.Info("RCA not possible for this log file, completing job with no RCA needed", map[string]interface{}{"jobID": jobID, "logFileID": job.LogFileID, "reason": job.LogFile.RCANotPossibleReason})
+		finalResult := map[string]interface{}{
+			"final": map[string]interface{}{
+				"summary":           job.LogFile.RCANotPossibleReason,
+				"severity":          "none",
+				"rootCause":         job.LogFile.RCANotPossibleReason,
+				"recommendations":   []string{"No RCA needed. No errors or warnings to analyze."},
+				"errorAnalysis":     []interface{}{},
+				"criticalErrors":    0,
+				"nonCriticalErrors": 0,
+			},
+		}
+		completedAt := time.Now()
+		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+			"status":       models.JobStatusCompleted,
+			"progress":     100,
+			"result":       finalResult,
+			"completed_at": &completedAt,
+		}).Error; err != nil {
+			logger.Error("Failed to update job completion for no RCA needed", map[string]interface{}{"jobID": jobID, "error": err})
+			return
+		}
+		// Update log file status
+		if err := js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "completed").Error; err != nil {
+			logger.Error("Failed to update log file status for no RCA needed", map[string]interface{}{"jobID": job.LogFileID, "error": err})
+		}
+		logger.Info("RCA job completed with no RCA needed", map[string]interface{}{"jobID": jobID})
+		return
+	}
+
 	// Update progress
 	js.updateJobProgress(jobID, 20)
 
@@ -153,6 +185,56 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 	// Update log file status
 	if err := js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "completed").Error; err != nil {
 		logger.Error("Failed to update log file status", map[string]interface{}{"jobID": job.LogFileID, "error": err})
+	}
+
+	// --- Save LogAnalysis and LogAnalysisMemory ---
+	if aggregated != nil && job.LogFile != nil {
+		// Save LogAnalysis
+		analysis := &models.LogAnalysis{
+			LogFileID:    job.LogFile.ID,
+			Summary:      aggregated.Summary,
+			Severity:     aggregated.Severity,
+			ErrorCount:   aggregated.CriticalErrors + aggregated.NonCriticalErrors,
+			WarningCount: job.LogFile.WarningCount,
+			Metadata: map[string]interface{}{
+				"rootCause":         aggregated.RootCause,
+				"recommendations":   aggregated.Recommendations,
+				"errorAnalysis":     aggregated.ErrorAnalysis,
+				"criticalErrors":    aggregated.CriticalErrors,
+				"nonCriticalErrors": aggregated.NonCriticalErrors,
+				"aiGenerated":       true,
+			},
+		}
+		if err := js.db.Create(analysis).Error; err != nil {
+			logger.Error("Failed to save LogAnalysis after RCA", map[string]interface{}{"jobID": jobID, "error": err})
+		}
+
+		// Save LogAnalysisMemory (with embedding)
+		var embedding models.JSONB = nil
+		if js.llmService != nil {
+			prompt := aggregated.Summary + "\n" + aggregated.RootCause
+			embed, err := js.llmService.GenerateEmbedding(prompt)
+			if err != nil {
+				logger.Warn("Failed to generate embedding for LogAnalysisMemory", map[string]interface{}{"jobID": jobID, "error": err})
+			} else if embed != nil {
+				embedding = models.JSONB{"embedding": embed}
+			}
+		}
+		memory := &models.LogAnalysisMemory{
+			LogFileID: &job.LogFile.ID,
+			Summary:   aggregated.Summary,
+			RootCause: aggregated.RootCause,
+			Embedding: embedding,
+			Metadata: map[string]interface{}{
+				"severity":        aggregated.Severity,
+				"recommendations": aggregated.Recommendations,
+				"errorAnalysis":   aggregated.ErrorAnalysis,
+			},
+			CreatedAt: time.Now(),
+		}
+		if err := js.db.Create(memory).Error; err != nil {
+			logger.Error("Failed to save LogAnalysisMemory after RCA", map[string]interface{}{"jobID": jobID, "error": err})
+		}
 	}
 
 	logger.Info("RCA analysis completed for job", map[string]interface{}{"jobID": jobID})

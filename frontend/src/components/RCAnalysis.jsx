@@ -185,6 +185,19 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     setIsSubmitting(false);
   };
 
+  // Before rendering RCA controls, check if RCA is possible
+  if (logFileDetails && logFileDetails.isRCAPossible === false) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-md p-4 flex items-center">
+        <svg className="h-6 w-6 text-blue-400 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z" /></svg>
+        <div>
+          <h4 className="text-blue-800 font-semibold mb-1">No RCA Needed</h4>
+          <p className="text-blue-700 text-sm">{logFileDetails.rcaNotPossibleReason || 'This log file does not require Root Cause Analysis.'}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">

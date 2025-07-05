@@ -411,20 +411,34 @@ func (lp *LogProcessor) ProcessLogFile(logFileID uint, filePath string) error {
 		}
 	}
 
+	// Check if RCA is possible/useful
+	isRCAPossible := true
+	rcaNotPossibleReason := ""
+	if errorCount == 0 && warningCount == 0 {
+		isRCAPossible = false
+		rcaNotPossibleReason = "No ERROR, FATAL, or WARNING entries found in the log file. RCA analysis is not needed as there are no issues to analyze."
+	} else if errorCount == 0 {
+		isRCAPossible = false
+		rcaNotPossibleReason = "No ERROR or FATAL entries found in the log file. Only warnings are present, which typically don't require RCA analysis."
+	}
 	// Update log file with final stats
 	now := time.Now()
 	updateData := map[string]interface{}{
-		"status":        "completed",
-		"entry_count":   len(entries),
-		"error_count":   errorCount,
-		"warning_count": warningCount,
-		"processed_at":  &now,
+		"status":                  "completed",
+		"entry_count":             len(entries),
+		"error_count":             errorCount,
+		"warning_count":           warningCount,
+		"processed_at":            &now,
+		"is_rca_possible":         isRCAPossible,
+		"rca_not_possible_reason": rcaNotPossibleReason,
 	}
 	logEntry.Info("Updating log file stats", map[string]interface{}{
-		"entries":  len(entries),
-		"errors":   errorCount,
-		"warnings": warningCount,
-		"status":   "completed",
+		"entries":              len(entries),
+		"errors":               errorCount,
+		"warnings":             warningCount,
+		"status":               "completed",
+		"isRCAPossible":        isRCAPossible,
+		"rcaNotPossibleReason": rcaNotPossibleReason,
 	})
 	if err := lp.db.Model(&models.LogFile{}).Where("id = ?", logFileID).Updates(updateData).Error; err != nil {
 		logger.WithError(err, "log_processor").Error("Failed to update log file stats")

@@ -143,16 +143,18 @@ type LogFile struct {
 	Size       int64  `json:"size"`
 	UploadedBy uint   `json:"uploadedBy" gorm:"not null"`
 	// Uploader     User           `json:"uploader" gorm:"foreignKey:UploadedBy"` // Temporarily disabled
-	Status            string         `json:"status" gorm:"default:'pending'"` // pending, processing, completed, failed
-	EntryCount        int            `json:"entryCount" gorm:"default:0"`
-	ErrorCount        int            `json:"errorCount" gorm:"default:0"`
-	WarningCount      int            `json:"warningCount" gorm:"default:0"`
-	ProcessedAt       *time.Time     `json:"processedAt"`
-	RCAAnalysisStatus string         `json:"rcaAnalysisStatus" gorm:"default:'not_started'"` // not_started, pending, running, completed, failed
-	RCAAnalysisJobID  *uint          `json:"rcaAnalysisJobId"`                               // Just a pointer, no FK constraint
-	CreatedAt         time.Time      `json:"createdAt"`
-	UpdatedAt         time.Time      `json:"updatedAt"`
-	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
+	Status               string         `json:"status" gorm:"default:'pending'"` // pending, processing, completed, failed
+	EntryCount           int            `json:"entryCount" gorm:"default:0"`
+	ErrorCount           int            `json:"errorCount" gorm:"default:0"`
+	WarningCount         int            `json:"warningCount" gorm:"default:0"`
+	ProcessedAt          *time.Time     `json:"processedAt"`
+	RCAAnalysisStatus    string         `json:"rcaAnalysisStatus" gorm:"default:'not_started'"` // not_started, pending, running, completed, failed
+	RCAAnalysisJobID     *uint          `json:"rcaAnalysisJobId"`                               // Just a pointer, no FK constraint
+	IsRCAPossible        bool           `json:"isRCAPossible" gorm:"default:true"`              // Whether RCA analysis is possible/useful
+	RCANotPossibleReason string         `json:"rcaNotPossibleReason" gorm:"type:text"`          // Reason why RCA is not possible
+	CreatedAt            time.Time      `json:"createdAt"`
+	UpdatedAt            time.Time      `json:"updatedAt"`
+	DeletedAt            gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relationships
 	Entries        []LogEntry `json:"entries,omitempty" gorm:"foreignKey:LogFileID"`

@@ -597,6 +597,13 @@ const Logs = () => {
                     <div className="text-xs text-gray-500 mt-1">
                       Uploaded: {new Date(logFile.createdAt).toLocaleString()}
                     </div>
+                    {/* RCA not possible message */}
+                    {logFile.isRCAPossible === false && (
+                      <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 flex items-center">
+                        <svg className="h-5 w-5 mr-2 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z" /></svg>
+                        <span><strong>No RCA Needed:</strong> {logFile.rcaNotPossibleReason || 'This file does not require RCA analysis.'}</span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex space-x-2">
                     <button
@@ -605,8 +612,8 @@ const Logs = () => {
                     >
                       View
                     </button>
-                    {/* Show Generate or Re-Generate RCA based on status */}
-                    {logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
+                    {/* RCA buttons only if RCA is possible */}
+                    {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
                       <button
                         onClick={() => handleAnalyze(logFile.id)}
                         className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
@@ -614,7 +621,7 @@ const Logs = () => {
                         Generate RCA
                       </button>
                     )}
-                    {logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
+                    {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
                       <button
                         onClick={() => handleAnalyze(logFile.id)}
                         className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700"
@@ -622,7 +629,7 @@ const Logs = () => {
                         Re-Generate RCA
                       </button>
                     )}
-                    {(logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (
+                    {logFile.isRCAPossible !== false && (logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (
                       <button
                         disabled
                         className="bg-gray-400 text-white px-3 py-1 rounded text-sm cursor-not-allowed"
@@ -630,7 +637,7 @@ const Logs = () => {
                         RCA Running...
                       </button>
                     )}
-                    {logFile.rcaAnalysisStatus === 'completed' && (
+                    {logFile.isRCAPossible !== false && logFile.rcaAnalysisStatus === 'completed' && (
                       <>
                         <button
                           onClick={() => handleShowLLMAnalysis(logFile)}
