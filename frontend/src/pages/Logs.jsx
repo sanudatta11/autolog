@@ -824,12 +824,12 @@ const Logs = () => {
                           Download RCA PDF
                         </button>
                         <button
-                          onClick={() => handleGiveReview(logFile)}
-                          className={`bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out ${logFile.hasReview ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          onClick={() => !logFile.hasReview && handleGiveReview(logFile)}
+                          className={`px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out ${logFile.hasReview ? 'bg-green-200 text-green-900 cursor-default' : 'bg-orange-500 hover:bg-orange-600 text-white'}`}
                           disabled={logFile.hasReview}
                           title={logFile.hasReview ? 'Review already submitted' : 'Give Review'}
                         >
-                          Give Review
+                          {logFile.hasReview ? 'Review Submitted' : 'Give Review'}
                         </button>
                       </>
                     )}
