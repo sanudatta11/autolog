@@ -23,7 +23,7 @@ const Logs = () => {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState({ text: '', type: 'error' });
   const [selectedLogFile, setSelectedLogFile] = useState(null);
   const [logEntries, setLogEntries] = useState([]);
   const [showAllEntries, setShowAllEntries] = useState(false);
@@ -92,7 +92,7 @@ const Logs = () => {
       const response = await api.get('/logs');
       setLogFiles(response.data.logFiles || []);
     } catch (error) {
-      setMessage('Failed to fetch log files: ' + error.message);
+      setMessage({ text: 'Failed to fetch log files: ' + error.message, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -106,18 +106,18 @@ const Logs = () => {
       const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
       
       if (!allowedTypes.includes(fileExtension)) {
-        setMessage('Please select a JSON, LOG, or TXT file');
+        setMessage({ text: 'Please select a JSON, LOG, or TXT file', type: 'warning' });
         return;
       }
       
       setSelectedFile(file);
-      setMessage('');
+      setMessage({ text: '', type: 'success' });
     }
   };
 
   const handleUpload = async () => {
     if (!selectedFile) {
-      setMessage('Please select a file to upload');
+      setMessage({ text: 'Please select a file to upload', type: 'warning' });
       return;
     }
 
@@ -138,7 +138,7 @@ const Logs = () => {
           }
         },
       });
-      setMessage('Log file uploaded successfully! Processing in background...');
+      setMessage({ text: 'Log file uploaded successfully! Processing in background...', type: 'success' });
       setSelectedFile(null);
       setUploadProgress(0);
       document.getElementById('file-input').value = '';
@@ -154,13 +154,13 @@ const Logs = () => {
         uploadedLogFile = files.find(f => f.filename === selectedFile?.name) || files[0];
         if (uploadedLogFile) {
           if (uploadedLogFile.status === 'completed') {
-            setMessage('Log file parsed successfully!');
+            setMessage({ text: 'Log file parsed successfully!', type: 'success' });
             clearInterval(pollInterval);
           } else if (uploadedLogFile.status === 'failed') {
-            setMessage('Log file parsing failed.');
+            setMessage({ text: 'Log file parsing failed.', type: 'error' });
             clearInterval(pollInterval);
           } else {
-            setMessage('Log file is being parsed...');
+            setMessage({ text: 'Log file is being parsed...', type: 'info' });
           }
         }
       };
@@ -168,7 +168,7 @@ const Logs = () => {
       // Run once immediately
       pollLogFileStatus();
     } catch (error) {
-      setMessage('Upload failed: ' + error.message);
+      setMessage({ text: 'Upload failed: ' + error.message, type: 'error' });
       setUploadProgress(0);
     } finally {
       setUploading(false);
@@ -181,7 +181,7 @@ const Logs = () => {
       setSelectedLogFile(response.data.logFile);
       setLogEntries(response.data.logFile.entries || []);
     } catch (error) {
-      setMessage('Failed to fetch log file details: ' + error.message);
+      setMessage({ text: 'Failed to fetch log file details: ' + error.message, type: 'error' });
     }
   };
 
@@ -192,10 +192,10 @@ const Logs = () => {
       const msg = response.data && response.data.message
         ? response.data.message
         : 'RCA analysis started.';
-      setMessage('RCA analysis started: ' + msg);
+      setMessage({ text: 'RCA analysis started: ' + msg, type: 'success' });
       fetchLogFiles();
     } catch (error) {
-      setMessage('Analysis failed: ' + (error.response?.data?.error || error.message));
+      setMessage({ text: 'Analysis failed: ' + (error.response?.data?.error || error.message), type: 'error' });
     } finally {
       setAnalyzeLoading((prev) => ({ ...prev, [logFileId]: false }));
     }
@@ -211,7 +211,7 @@ const Logs = () => {
     if (!deleteTargetLogFile) return;
     try {
       await api.delete(`/logs/${deleteTargetLogFile.id}?hardDelete=${hardDelete}`);
-      setMessage('Log file deleted successfully');
+      setMessage({ text: 'Log file deleted successfully', type: 'success' });
       setShowDeleteModal(false);
       setDeleteTargetLogFile(null);
       setHardDelete(false);
@@ -221,7 +221,7 @@ const Logs = () => {
         setLogEntries([]);
       }
     } catch (error) {
-      setMessage('Failed to delete log file: ' + error.message);
+      setMessage({ text: 'Failed to delete log file: ' + error.message, type: 'error' });
       setShowDeleteModal(false);
       setDeleteTargetLogFile(null);
       setHardDelete(false);
@@ -554,7 +554,7 @@ const Logs = () => {
   return (
     <div className="container mx-auto px-4 py-8">
       {/* Toast for error notifications */}
-      <Toast message={message} onClose={() => setMessage('')} />
+      <Toast message={message.text} type={message.type} onClose={() => setMessage({ text: '', type: 'error' })} />
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Log Analysis & RCA</h1>
       </div>
@@ -580,9 +580,9 @@ const Logs = () => {
               {uploading ? 'Uploading...' : 'Upload'}
             </button>
           </div>
-          {message && (
+          {message.text && (
             <div className="mt-4 p-3 bg-blue-100 text-blue-800 rounded">
-              {message}
+              {message.text}
             </div>
           )}
           {uploadProgress > 0 && uploading && (
@@ -861,7 +861,7 @@ const Logs = () => {
               initialStatus={selectedLogFile.rcaAnalysisStatus || 'idle'}
               hasReview={selectedLogFile?.hasReview}
               onAnalysisComplete={(results) => {
-                setMessage('RCA analysis completed successfully!');
+                setMessage({ text: 'RCA analysis completed successfully!', type: 'success' });
                 fetchLogFiles();
               }}
             />

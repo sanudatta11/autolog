@@ -684,7 +684,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                     <td className="px-3 py-2">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '-'}</td>
                     <td className="px-3 py-2 text-right">{job.totalChunks || '-'}</td>
                     <td className="px-3 py-2 text-right">{job.currentChunk || '-'}</td>
-                    <td className="px-3 py-2 text-right">{job.failedChunk || '-'}</td>
+                    <td className="px-3 py-2 text-right">{job.failedChunk != null ? job.failedChunk : 0}</td>
                     <td className="px-3 py-2 text-center space-x-1">
                       {job.status === 'completed' && (
                         hasReview ? (
