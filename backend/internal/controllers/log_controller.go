@@ -753,17 +753,18 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 	var analyses []map[string]interface{}
 	for _, job := range jobs {
 		analysis := map[string]interface{}{
-			"id":          job.ID,
-			"logFileID":   job.LogFileID,
-			"status":      job.Status,
-			"progress":    job.Progress,
-			"error":       job.Error,
-			"createdAt":   job.CreatedAt,
-			"updatedAt":   job.UpdatedAt,
-			"totalChunks": job.TotalChunks,
-			"failedChunk": job.FailedChunk,
-			"startedAt":   job.StartedAt,
-			"completedAt": job.CompletedAt,
+			"id":           job.ID,
+			"logFileID":    job.LogFileID,
+			"status":       job.Status,
+			"progress":     job.Progress,
+			"error":        job.Error,
+			"createdAt":    job.CreatedAt,
+			"updatedAt":    job.UpdatedAt,
+			"totalChunks":  job.TotalChunks,
+			"currentChunk": job.CurrentChunk,
+			"failedChunk":  job.FailedChunk,
+			"startedAt":    job.StartedAt,
+			"completedAt":  job.CompletedAt,
 		}
 
 		// If job is completed, extract analysis results
