@@ -151,10 +151,7 @@ const Logs = () => {
           }
         }
       };
-      // Start polling every 2 seconds only if polling is enabled
-      if (ENABLE_POLLING) {
-        pollInterval = setInterval(pollLogFileStatus, 2000);
-      }
+      // Polling is now user-driven per RCA job, not global. Just run once.
       // Run once immediately
       pollLogFileStatus();
     } catch (error) {

@@ -23,7 +23,6 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [useChunking, setUseChunking] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [logFileDetails, setLogFileDetails] = useState(null);
-  const [pollingEnabled, setPollingEnabled] = useState(false);
   const POLLING_MODES = ['Off', 'RCA Only', 'Processing Only', 'Both'];
   const [pollingMode, setPollingMode] = useState('Off');
   const [showResults, setShowResults] = useState(false);
