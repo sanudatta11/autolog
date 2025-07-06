@@ -505,6 +505,105 @@
         { "level": "INFO", "message_contains": "Line 9" },
         { "level": "INFO", "message_contains": "Line 10" }
       ]
+    },
+    {
+      "name": "Sample Logs 3",
+      "description": "A complex mix of different log formats from sample-logs-3.txt with exact content validation",
+      "log_file": "sample-logs-3.txt",
+      "limit": 100,
+      "expect": [
+        {
+          "timestamp": "2024-07-01T08:00:00.000Z",
+          "level": "ERROR",
+          "message": "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+          "metadata": {
+            "pid": "202",
+            "tid": "7074"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:01.000Z",
+          "level": "WARN",
+          "message": "Request started: /login",
+          "metadata": {
+            "pid": "2126",
+            "req_id": "ee864433",
+            "trace": "07872b04-3975-4cc3-83cf-5600a4d4f54f"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:02.000Z",
+          "level": "WARN",
+          "message": "External API call failed: status=401",
+          "metadata": {
+            "pid": "1383",
+            "req_id": "3d2b9177",
+            "trace": "25a933a9-c325-4837-872c-b87173baf995"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:03.000Z",
+          "level": "INFO",
+          "message": "Completed 404 in 716ms for 72.40.56.246",
+          "metadata": {
+            "pid": "4315",
+            "req_id": "768a9000",
+            "trace": "c16ab3fd-bac0-4b68-ac7f-b735a5164eb1"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:04.000Z",
+          "level": "ERROR",
+          "message": "External API call failed: status=502",
+          "metadata": {
+            "pid": "2470",
+            "req_id": "e0b87cae",
+            "trace": "ab307509-c32d-4d3e-aaff-fd6e818a8531"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:05.000Z",
+          "level": "ERROR",
+          "message": "SELECT * FROM reports WHERE date=%s disk I/O error",
+          "metadata": {}
+        },
+        {
+          "timestamp": "2024-07-01T08:00:06.000Z",
+          "level": "WARN",
+          "message": "Session expired for user 2989",
+          "metadata": {
+            "pid": "1187",
+            "req_id": "9ced2110",
+            "trace": "2b46c3b1-0046-4131-a39c-e06b63e73a65"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:07.000Z",
+          "level": null,
+          "message": "91.54.172.69 - - GET /api/v1/orders HTTP/1.1 503 1521 - Go-http-client/1.1 X-Request-ID: a2f4858c",
+          "metadata": {}
+        },
+        {
+          "timestamp": "2024-07-01T08:00:08.000Z",
+          "level": "WARN",
+          "message": "Request started: /api/v1/products",
+          "metadata": {
+            "pid": "3187",
+            "req_id": "33afd9e4",
+            "trace": "7ba33aef-6812-45a4-be6d-1efdeb21249c"
+          }
+        },
+        {
+          "timestamp": "2024-07-01T08:00:09.000Z",
+          "level": "ERROR",
+          "message": "Cache miss for key 'user_profile_3242'",
+          "metadata": {
+            "pid": "4297",
+            "req_id": "94b17195",
+            "trace": "abf17670-886e-4f23-be9c-68367ada8412"
+          }
+        }
+      ]
     }
   ],
   "microservice_test_cases": [
