@@ -422,6 +422,12 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
               style={{ width: `${progress}%` }}
             ></div>
           </div>
+          {/* Add current chunk to progress area */}
+          {(currentChunk && totalChunks) && (
+            <div className="text-xs text-gray-500 mt-1">
+              Processing chunk {currentChunk} of {totalChunks}
+            </div>
+          )}
         </>
       )}
       {/* Error message */}
@@ -650,6 +656,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                   <th className="px-3 py-2 text-left">Started</th>
                   <th className="px-3 py-2 text-left">Completed</th>
                   <th className="px-3 py-2 text-right">Chunks</th>
+                  <th className="px-3 py-2 text-right">Current Chunk</th>
                   <th className="px-3 py-2 text-right">Failed Chunk</th>
                   <th className="px-3 py-2 text-center">Actions</th>
               </tr>
@@ -676,6 +683,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                     <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}</td>
                     <td className="px-3 py-2">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '-'}</td>
                     <td className="px-3 py-2 text-right">{job.totalChunks || '-'}</td>
+                    <td className="px-3 py-2 text-right">{job.currentChunk || '-'}</td>
                     <td className="px-3 py-2 text-right">{job.failedChunk || '-'}</td>
                     <td className="px-3 py-2 text-center space-x-1">
                       {job.status === 'completed' && (

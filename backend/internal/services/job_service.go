@@ -409,6 +409,16 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		chunks = append(chunks, entries[i:end])
 	}
 	*totalChunks = len(chunks)
+
+	// Update TotalChunks in the database before starting LLM processing
+	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", len(chunks)).Error; err != nil {
+		logger.Error("[RCA] Failed to update total chunks in database", map[string]interface{}{
+			"jobID":       jobID,
+			"totalChunks": len(chunks),
+			"error":       err,
+		})
+	}
+
 	var partialResults []*LogAnalysisResponse
 	for i, chunk := range chunks {
 		currentChunk := i + 1
