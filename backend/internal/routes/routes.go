@@ -20,7 +20,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 
 	// Initialize services
 	parsingRuleService := services.NewParsingRuleService(db)
-	learningService := services.NewLearningService(db, llmService)
+	feedbackService := services.NewFeedbackService(db)
+	learningService := services.NewLearningService(db, llmService, feedbackService)
 
 	// Initialize controllers
 	authController := controllers.NewAuthController(db)
@@ -119,6 +120,13 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				learning.DELETE("/patterns/:patternID", learningController.DeletePattern)
 				learning.GET("/metrics", learningController.GetLearningMetrics)
 				learning.GET("/similar-incidents/:logFileID", learningController.GetSimilarIncidents)
+			}
+
+			// Feedback Insights
+			feedback := protected.Group("/feedback")
+			{
+				feedback.GET("/insights", logController.GetFeedbackInsights)
+				feedback.GET("/patterns/:patternName", logController.GetFeedbackForPattern)
 			}
 		}
 	}

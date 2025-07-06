@@ -11,20 +11,23 @@ import (
 	"gorm.io/gorm"
 )
 
+// JobService handles job processing for log analysis
 type JobService struct {
 	db              *gorm.DB
 	llmService      *LLMService
 	learningService *LearningService
+	feedbackService *FeedbackService
+	stopChan        chan struct{}
 }
 
 // NewJobService creates a new job service
-func NewJobService(db *gorm.DB, llmService *LLMService) *JobService {
-	learningService := NewLearningService(db, llmService)
-
+func NewJobService(db *gorm.DB, llmService *LLMService, learningService *LearningService, feedbackService *FeedbackService) *JobService {
 	return &JobService{
 		db:              db,
 		llmService:      llmService,
 		learningService: learningService,
+		feedbackService: feedbackService,
+		stopChan:        make(chan struct{}),
 	}
 }
 
@@ -384,6 +387,18 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		})
 	}
 
+	// Get feedback context for enhanced analysis
+	var feedbackContext string
+	if js.feedbackService != nil {
+		feedbackContext = js.feedbackService.GetFeedbackContext(learningInsights.SimilarIncidents, learningInsights.PatternMatches)
+		if feedbackContext != "" {
+			logger.Info("[RCA] Retrieved feedback context", map[string]interface{}{
+				"jobID":                 jobID,
+				"feedbackContextLength": len(feedbackContext),
+			})
+		}
+	}
+
 	chunkSize := 25 // Reduced from 100 to 25 for faster fail/succeed
 	var chunks [][]models.LogEntry
 	for i := 0; i < len(entries); i += chunkSize {
@@ -399,8 +414,6 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		currentChunk := i + 1
 		// Update currentChunk in the job
 		js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", currentChunk)
-		logger.Info("[RCA] Processing chunk", map[string]interface{}{"jobID": jobID, "chunk": currentChunk, "totalChunks": *totalChunks})
-		logger.Info("[RCA] Analyzing chunk", map[string]interface{}{"jobID": jobID, "chunk": currentChunk, "startEntry": i*chunkSize + 1, "endEntry": i*chunkSize + len(chunk)})
 
 		// Check for shutdown before processing chunk
 		select {
@@ -409,57 +422,81 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		default:
 		}
 
-		// Use learning insights for better analysis
-		analysis, err := js.analyzeChunkWithLearning(logFile, chunk, jobID, learningInsights)
+		// Process chunk with enhanced context
+		analysis, err := js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext)
 		if err != nil {
-			logger.Error("[RCA] Chunk failed", map[string]interface{}{"jobID": jobID, "chunk": currentChunk, "error": err})
 			*failedChunk = currentChunk
-			return nil, fmt.Errorf("LLM analysis failed for chunk %d: %w", currentChunk, err)
+			logger.Error("[RCA] Chunk analysis failed", map[string]interface{}{
+				"jobID":       jobID,
+				"chunk":       currentChunk,
+				"totalChunks": len(chunks),
+				"error":       err.Error(),
+			})
+			return nil, fmt.Errorf("chunk %d analysis failed: %w", currentChunk, err)
 		}
-		logger.Info("[RCA] Chunk succeeded", map[string]interface{}{"jobID": jobID, "chunk": currentChunk})
+
 		partialResults = append(partialResults, analysis)
+		progress := int(float64(currentChunk) / float64(len(chunks)) * 80) // 80% for chunk processing
+		js.updateJobProgress(jobID, progress)
+
+		logger.Info("[RCA] Chunk processed successfully", map[string]interface{}{
+			"jobID":       jobID,
+			"chunk":       currentChunk,
+			"totalChunks": len(chunks),
+			"severity":    analysis.Severity,
+		})
 	}
+
 	return partialResults, nil
 }
 
-// analyzeChunkWithLearning analyzes a chunk with learning insights
-func (js *JobService) analyzeChunkWithLearning(logFile *models.LogFile, chunk []models.LogEntry, jobID uint, learningInsights *LearningInsights) (*LogAnalysisResponse, error) {
-	// Filter error entries from this chunk
-	errorEntries := js.filterErrorEntries(chunk)
-
+// analyzeChunkWithEnhancedContext analyzes a chunk with learning insights and feedback context
+func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string) (*LogAnalysisResponse, error) {
+	// Filter only ERROR and FATAL entries for analysis
+	errorEntries := js.filterErrorEntries(entries)
 	if len(errorEntries) == 0 {
-		// No errors in this chunk, return basic analysis
+		logger.Info("[RCA] No ERROR/FATAL entries found in chunk, using fallback analysis", map[string]interface{}{
+			"jobID":        jobID,
+			"totalEntries": len(entries),
+		})
 		return js.llmService.generateNoErrorsAnalysis(logFile), nil
 	}
 
-	// Create analysis request
+	logger.Info("[RCA] Found ERROR/FATAL entries in chunk, proceeding with enhanced LLM analysis", map[string]interface{}{
+		"jobID":        jobID,
+		"errorEntries": len(errorEntries),
+		"totalEntries": len(entries),
+		"hasLearning":  learningInsights != nil,
+		"hasFeedback":  feedbackContext != "",
+	})
+
 	request := LogAnalysisRequest{
 		LogEntries:   errorEntries,
 		ErrorCount:   logFile.ErrorCount,
 		WarningCount: logFile.WarningCount,
 		Filename:     logFile.Filename,
 	}
-
 	if len(errorEntries) > 0 {
 		request.StartTime = errorEntries[0].Timestamp
 		request.EndTime = errorEntries[len(errorEntries)-1].Timestamp
 	}
 
-	// Use learning-enhanced prompt if we have insights
+	// Create enhanced prompt with learning insights and feedback
 	var prompt string
-	if learningInsights != nil && (len(learningInsights.SimilarIncidents) > 0 || len(learningInsights.PatternMatches) > 0) {
-		prompt = js.llmService.CreateDetailedErrorAnalysisPromptWithLearning(request, errorEntries, learningInsights)
-		logger.Debug("[RCA] Using learning-enhanced prompt", map[string]interface{}{
+	if learningInsights != nil && (len(learningInsights.SimilarIncidents) > 0 || len(learningInsights.PatternMatches) > 0) || feedbackContext != "" {
+		prompt = js.llmService.CreateFeedbackEnhancedPrompt(request, errorEntries, learningInsights, feedbackContext)
+		logger.Debug("[RCA] Using feedback-enhanced prompt", map[string]interface{}{
 			"jobID":            jobID,
 			"similarIncidents": len(learningInsights.SimilarIncidents),
 			"patternMatches":   len(learningInsights.PatternMatches),
+			"hasFeedback":      feedbackContext != "",
 		})
 	} else {
-		prompt = js.llmService.CreateDetailedErrorAnalysisPrompt(request, errorEntries, "")
+		prompt = js.llmService.createDetailedErrorAnalysisPrompt(request, errorEntries, "")
 	}
 
 	// Call LLM with the enhanced prompt
-	response, err := js.llmService.callLLMWithContext(prompt, &logFile.ID, &jobID, "rca_analysis_with_learning")
+	response, err := js.llmService.callLLMWithContext(prompt, &logFile.ID, &jobID, "rca_analysis_with_feedback")
 	if err != nil {
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}

@@ -18,27 +18,36 @@ import (
 const ENABLE_LOG_FILE_FLUSH = false
 
 type LogController struct {
-	db           *gorm.DB
-	logProcessor *services.LogProcessor
-	llmService   *services.LLMService
-	jobService   *services.JobService
-	uploadDir    string
-	stopChan     <-chan struct{} // Add stopChan for graceful shutdown
+	db              *gorm.DB
+	logProcessor    *services.LogProcessor
+	llmService      *services.LLMService
+	learningService *services.LearningService
+	feedbackService *services.FeedbackService
+	jobService      *services.JobService
+	uploadDir       string
+	stopChan        <-chan struct{} // Add stopChan for graceful shutdown
 }
 
 func NewLogController(db *gorm.DB, llmService *services.LLMService, stopChan <-chan struct{}) *LogController {
-	jobService := services.NewJobService(db, llmService)
+	// Initialize services
+	feedbackService := services.NewFeedbackService(db)
+	learningService := services.NewLearningService(db, llmService, feedbackService)
+	jobService := services.NewJobService(db, llmService, learningService, feedbackService)
+
 	logger.Info("LogController initialized", map[string]interface{}{
 		"upload_dir": "uploads/logs",
 		"component":  "log_controller",
 	})
+
 	return &LogController{
-		db:           db,
-		logProcessor: services.NewLogProcessor(db, llmService),
-		llmService:   llmService,
-		jobService:   jobService,
-		uploadDir:    "uploads/logs",
-		stopChan:     stopChan,
+		db:              db,
+		logProcessor:    services.NewLogProcessor(db, llmService),
+		llmService:      llmService,
+		learningService: learningService,
+		feedbackService: feedbackService,
+		jobService:      jobService,
+		uploadDir:       "uploads/logs",
+		stopChan:        stopChan,
 	}
 }
 
@@ -1339,4 +1348,78 @@ func (lc *LogController) GetJobDetails(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{"job": job})
+}
+
+// GetFeedbackInsights returns aggregated feedback insights
+func (lc *LogController) GetFeedbackInsights(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		logger.Error("Unauthorized access attempt to get feedback insights", nil)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get feedback insights request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
+	// Create feedback service
+	feedbackService := services.NewFeedbackService(lc.db)
+
+	// Get feedback insights
+	insights, err := feedbackService.GetFeedbackInsights()
+	if err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to get feedback insights")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get feedback insights"})
+		return
+	}
+
+	logEntry.Info("Feedback insights retrieved successfully", map[string]interface{}{
+		"insights_count": len(insights),
+	})
+
+	c.JSON(http.StatusOK, gin.H{"insights": insights})
+}
+
+// GetFeedbackForPattern returns feedback for a specific pattern
+func (lc *LogController) GetFeedbackForPattern(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		logger.Error("Unauthorized access attempt to get pattern feedback", nil)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get pattern feedback request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
+	patternName := c.Param("patternName")
+	if patternName == "" {
+		logger.Error("Pattern name is required", nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Pattern name is required"})
+		return
+	}
+
+	// Create feedback service
+	feedbackService := services.NewFeedbackService(lc.db)
+
+	// Get feedback for pattern
+	feedbacks, err := feedbackService.GetFeedbackForPattern(patternName)
+	if err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to get pattern feedback")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get pattern feedback"})
+		return
+	}
+
+	logEntry.Info("Pattern feedback retrieved successfully", map[string]interface{}{
+		"pattern_name":   patternName,
+		"feedback_count": len(feedbacks),
+	})
+
+	c.JSON(http.StatusOK, gin.H{"pattern": patternName, "feedback": feedbacks})
 }

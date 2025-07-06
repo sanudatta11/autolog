@@ -370,28 +370,82 @@ func (ls *LLMService) CreateDetailedErrorAnalysisPrompt(request LogAnalysisReque
 	return ls.createDetailedErrorAnalysisPrompt(request, errorEntries, similarIncidents)
 }
 
-// CreateDetailedErrorAnalysisPromptWithLearning creates a prompt enhanced with historical learning insights
-func (ls *LLMService) CreateDetailedErrorAnalysisPromptWithLearning(request LogAnalysisRequest, errorEntries []models.LogEntry, learningInsights *LearningInsights) string {
-	// Build the error entries section
-	var errorEntriesText strings.Builder
-	for i, entry := range errorEntries {
-		errorEntriesText.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, entry.Timestamp.Format("2006-01-02 15:04:05"), entry.Message))
+// CreateDetailedErrorAnalysisPromptWithLearning creates a prompt with learning insights and feedback
+func (ls *LLMService) CreateDetailedErrorAnalysisPromptWithLearning(request LogAnalysisRequest, errorEntries []models.LogEntry, insights *LearningInsights) string {
+	var result strings.Builder
+
+	// Add similar incidents
+	if len(insights.SimilarIncidents) > 0 {
+		result.WriteString("SIMILAR PAST INCIDENTS:\n")
+		for i, incident := range insights.SimilarIncidents {
+			result.WriteString(fmt.Sprintf("%d. File: %s (Similarity: %.2f%%)\n", i+1, incident.Filename, incident.Similarity*100))
+			result.WriteString(fmt.Sprintf("   Summary: %s\n", incident.Summary))
+			result.WriteString(fmt.Sprintf("   Root Cause: %s\n", incident.RootCause))
+			result.WriteString(fmt.Sprintf("   Severity: %s\n", incident.Severity))
+			result.WriteString(fmt.Sprintf("   Relevance: %s\n\n", incident.Relevance))
+		}
 	}
 
-	// Convert learning insights to string format
-	insightsText := ls.formatLearningInsights(learningInsights)
+	// Add pattern matches
+	if len(insights.PatternMatches) > 0 {
+		result.WriteString("IDENTIFIED PATTERNS:\n")
+		for i, match := range insights.PatternMatches {
+			result.WriteString(fmt.Sprintf("%d. Pattern: %s (Confidence: %.2f%%)\n", i+1, match.Pattern.Name, match.Confidence*100))
+			result.WriteString(fmt.Sprintf("   Description: %s\n", match.Pattern.Description))
+			result.WriteString(fmt.Sprintf("   Root Cause: %s\n", match.Pattern.RootCause))
+			result.WriteString(fmt.Sprintf("   Common Fixes: %s\n", strings.Join(match.Pattern.CommonFixes, "; ")))
+			result.WriteString(fmt.Sprintf("   Match Reason: %s\n", match.MatchReason))
+			result.WriteString(fmt.Sprintf("   Relevance: %s\n\n", match.Relevance))
+		}
+	}
 
-	// Build the prompt using the learning-enhanced constant
-	prompt := fmt.Sprintf(LEARNING_ENHANCED_PROMPT,
-		request.Filename,
-		request.ErrorCount,
-		request.WarningCount,
-		request.StartTime.Format("2006-01-02 15:04:05"),
-		request.EndTime.Format("2006-01-02 15:04:05"),
-		errorEntriesText.String(),
-		insightsText)
+	// Add confidence boost
+	if insights.ConfidenceBoost > 0 {
+		result.WriteString(fmt.Sprintf("CONFIDENCE BOOST: %.2f%%\n", insights.ConfidenceBoost*100))
+	}
 
-	return prompt
+	// Add suggested context
+	if insights.SuggestedContext != "" {
+		result.WriteString(fmt.Sprintf("SUGGESTED CONTEXT: %s\n", insights.SuggestedContext))
+	}
+
+	// Add learning metrics
+	if insights.LearningMetrics.TotalAnalyses > 0 {
+		result.WriteString(fmt.Sprintf("LEARNING METRICS:\n"))
+		result.WriteString(fmt.Sprintf("- Total Analyses: %d\n", insights.LearningMetrics.TotalAnalyses))
+		result.WriteString(fmt.Sprintf("- Pattern Matches: %d\n", insights.LearningMetrics.PatternMatches))
+		result.WriteString(fmt.Sprintf("- Accuracy Improvement: %.2f%%\n", insights.LearningMetrics.AccuracyImprovement*100))
+		result.WriteString(fmt.Sprintf("- Average Confidence: %.2f%%\n", insights.LearningMetrics.AverageConfidence*100))
+	}
+
+	return result.String()
+}
+
+// CreateFeedbackEnhancedPrompt creates a prompt that includes user feedback for better analysis
+func (ls *LLMService) CreateFeedbackEnhancedPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry, insights *LearningInsights, feedbackContext string) string {
+	var result strings.Builder
+
+	// Start with the base prompt
+	basePrompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, "")
+	result.WriteString(basePrompt)
+
+	// Add learning insights
+	if insights != nil {
+		learningContext := ls.CreateDetailedErrorAnalysisPromptWithLearning(request, errorEntries, insights)
+		if learningContext != "" {
+			result.WriteString("\n\nLEARNING INSIGHTS:\n")
+			result.WriteString(learningContext)
+		}
+	}
+
+	// Add feedback context
+	if feedbackContext != "" {
+		result.WriteString("\n\nUSER FEEDBACK CONTEXT:\n")
+		result.WriteString(feedbackContext)
+		result.WriteString("\n\nIMPORTANT: Consider the user feedback above when analyzing similar patterns and root causes. If users have corrected similar analyses in the past, incorporate those corrections into your analysis.")
+	}
+
+	return result.String()
 }
 
 // formatLearningInsights converts LearningInsights to a formatted string for LLM consumption

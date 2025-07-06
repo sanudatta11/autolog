@@ -880,6 +880,9 @@ func (lp *LogProcessor) parseTimestamp(timestampStr string) (time.Time, error) {
 		time.UnixDate,
 		time.RFC822,
 		time.RFC850,
+		"02/Jan/2006:15:04:05 -0700", // Apache/Nginx log format
+		"02/Jan/2006:15:04:05 +0000", // Apache/Nginx log format with UTC
+		"02/Jan/2006:15:04:05 Z",     // Apache/Nginx log format with Z
 	}
 
 	for _, format := range formats {
@@ -1316,6 +1319,9 @@ func NormalizeToLogEntry(logFileID uint, parsed map[string]interface{}) models.L
 						"2006-01-02T15:04:05.000000Z",
 						"2006-01-02 15:04:05.000",
 						"2006-01-02 15:04:05.000000",
+						"02/Jan/2006:15:04:05 -0700", // Apache/Nginx log format
+						"02/Jan/2006:15:04:05 +0000", // Apache/Nginx log format with UTC
+						"02/Jan/2006:15:04:05 Z",     // Apache/Nginx log format with Z
 					}
 					for _, format := range formats {
 						t, err := time.Parse(format, s)

@@ -16,6 +16,7 @@ import (
 type LearningService struct {
 	db                  *gorm.DB
 	llmService          *LLMService
+	feedbackService     *FeedbackService
 	similarityThreshold float64
 	maxMemoriesToUse    int
 }
@@ -86,10 +87,11 @@ type LearningMetrics struct {
 }
 
 // NewLearningService creates a new learning service
-func NewLearningService(db *gorm.DB, llmService *LLMService) *LearningService {
+func NewLearningService(db *gorm.DB, llmService *LLMService, feedbackService *FeedbackService) *LearningService {
 	return &LearningService{
 		db:                  db,
 		llmService:          llmService,
+		feedbackService:     feedbackService,
 		similarityThreshold: 0.7, // 70% similarity threshold
 		maxMemoriesToUse:    5,   // Use top 5 similar memories
 	}
@@ -171,6 +173,8 @@ func (ls *LearningService) GetLearningInsights(logFile *models.LogFile, errorEnt
 			"error": err,
 		})
 	} else {
+		// Adjust pattern confidence based on feedback
+		ls.adjustPatternConfidenceWithFeedback(patternMatches)
 		insights.PatternMatches = patternMatches
 		insights.IdentifiedPatterns = ls.extractPatternsFromMatches(patternMatches)
 	}
@@ -323,6 +327,33 @@ func (ls *LearningService) identifyPatterns(errorEntries []models.LogEntry) ([]P
 	})
 
 	return matches, nil
+}
+
+// adjustPatternConfidenceWithFeedback adjusts pattern confidence based on user feedback
+func (ls *LearningService) adjustPatternConfidenceWithFeedback(patternMatches []PatternMatch) {
+	if ls.feedbackService == nil {
+		return
+	}
+
+	for i := range patternMatches {
+		originalConfidence := patternMatches[i].Confidence
+		adjustedConfidence := ls.feedbackService.AdjustConfidenceBasedOnFeedback(
+			patternMatches[i].Pattern.Name,
+			originalConfidence,
+		)
+
+		patternMatches[i].Confidence = adjustedConfidence
+
+		// Update relevance based on adjusted confidence
+		patternMatches[i].Relevance = ls.calculateRelevance(adjustedConfidence)
+
+		logger.Debug("Adjusted pattern confidence with feedback", map[string]interface{}{
+			"pattern":            patternMatches[i].Pattern.Name,
+			"originalConfidence": originalConfidence,
+			"adjustedConfidence": adjustedConfidence,
+			"relevance":          patternMatches[i].Relevance,
+		})
+	}
 }
 
 // buildErrorContext builds a context string from error entries
@@ -598,6 +629,14 @@ func (ls *LearningService) generateSuggestedContext(insights *LearningInsights) 
 				strings.Join(match.Pattern.CommonFixes, ", ")))
 		}
 		context.WriteString("\n")
+	}
+
+	// Add feedback context if feedback service is available
+	if ls.feedbackService != nil {
+		feedbackContext := ls.feedbackService.GetFeedbackContext(insights.SimilarIncidents, insights.PatternMatches)
+		if feedbackContext != "" {
+			context.WriteString(feedbackContext)
+		}
 	}
 
 	if insights.ConfidenceBoost > 0 {
