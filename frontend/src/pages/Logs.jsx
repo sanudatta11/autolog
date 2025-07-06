@@ -14,6 +14,7 @@ import {
   PDF_TABLE_COLUMN_WIDTHS
 } from '../constants';
 import { PollingContext } from '../components/Layout';
+import Toast from '../components/Toast';
 
 const Logs = () => {
   const { token } = useAuth();
@@ -43,6 +44,8 @@ const Logs = () => {
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSuccess, setReviewSuccess] = useState(false);
   const [reviewError, setReviewError] = useState('');
+
+  const [analyzeLoading, setAnalyzeLoading] = useState({}); // { [logFileId]: boolean }
 
   // After logFiles are updated, check if polling should be running
   useEffect(() => {
@@ -183,16 +186,18 @@ const Logs = () => {
   };
 
   const handleAnalyze = async (logFileId) => {
+    setAnalyzeLoading((prev) => ({ ...prev, [logFileId]: true }));
     try {
       const response = await api.post(`/logs/${logFileId}/analyze`);
       const msg = response.data && response.data.message
         ? response.data.message
         : 'RCA analysis started.';
       setMessage('RCA analysis started: ' + msg);
-      // Refresh log files to show updated status
       fetchLogFiles();
     } catch (error) {
       setMessage('Analysis failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setAnalyzeLoading((prev) => ({ ...prev, [logFileId]: false }));
     }
   };
 
@@ -548,6 +553,8 @@ const Logs = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* Toast for error notifications */}
+      <Toast message={message} onClose={() => setMessage('')} />
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Log Analysis & RCA</h1>
       </div>
@@ -770,17 +777,27 @@ const Logs = () => {
                     {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
                       <button
                         onClick={() => handleAnalyze(logFile.id)}
-                        className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
+                        className={`bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        disabled={analyzeLoading[logFile.id]}
                       >
-                        Generate RCA
+                        {analyzeLoading[logFile.id] ? (
+                          <span className="flex items-center"><span className="animate-spin mr-2">⏳</span>Generating...</span>
+                        ) : (
+                          'Generate RCA'
+                        )}
                       </button>
                     )}
                     {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
                       <button
                         onClick={() => handleAnalyze(logFile.id)}
-                        className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700"
+                        className={`bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        disabled={analyzeLoading[logFile.id]}
                       >
-                        Re-Generate RCA
+                        {analyzeLoading[logFile.id] ? (
+                          <span className="flex items-center"><span className="animate-spin mr-2">⏳</span>Generating...</span>
+                        ) : (
+                          'Re-Generate RCA'
+                        )}
                       </button>
                     )}
                     {logFile.isRCAPossible !== false && (logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (

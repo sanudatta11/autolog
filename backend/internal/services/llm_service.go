@@ -872,10 +872,54 @@ func (ls *LLMService) extractErrorPattern(message string) string {
 // CheckLLMHealth verifies if the local LLM is available
 func (ls *LLMService) CheckLLMHealth() error {
 	// Use a simple health check prompt to verify LLM functionality
-	_, err := ls.callLLMWithContext(HEALTH_CHECK_PROMPT, nil, nil, "health_check")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	request := OllamaGenerateRequest{
+		Model:  ls.llmModel,
+		Prompt: HEALTH_CHECK_PROMPT,
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.2,
+			"top_p":       0.8,
+		},
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal health check request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create health check request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use a local client with a 3s timeout for health check only
+	healthClient := &http.Client{Timeout: 3 * time.Second}
+	resp, err := healthClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("LLM service not available: %w", err)
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var respBodyBytes []byte
+		respBodyBytes, _ = io.ReadAll(resp.Body)
+		return fmt.Errorf("LLM health check failed: status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+	}
+
+	var ollamaResp OllamaGenerateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return fmt.Errorf("failed to decode LLM health check response: %w", err)
+	}
+
+	if strings.TrimSpace(ollamaResp.Response) != "OK" {
+		return fmt.Errorf("LLM health check did not return OK: %s", ollamaResp.Response)
+	}
+
 	return nil
 }
 
