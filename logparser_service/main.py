@@ -400,12 +400,14 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
                     line = line.strip()
                     if line:
                         lines.append(line)
+            print(f"[DEBUG] Read {len(lines)} lines from file {file.filename}")
             
             if not lines:
                 raise HTTPException(status_code=400, detail="Empty log file")
             
             # Try hybrid JSON parsing first
             parsed_entries, unstructured_lines = parse_hybrid_json(lines)
+            print(f"[DEBUG] Hybrid JSON: {len(parsed_entries)} JSON entries, {len(unstructured_lines)} unstructured lines")
             
             # If we have JSON entries, return them (even if mixed with unstructured)
             if parsed_entries:
@@ -419,6 +421,7 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
             if log_format == 'apache_nginx':
                 print(f"[DEBUG] Using Apache/Nginx parser for {len(lines)} lines")
                 entries = parse_apache_nginx_logs(lines)
+                print(f"[DEBUG] Apache/Nginx parser returned {len(entries)} entries")
                 return JSONResponse(content=entries)
             
             # If no JSON entries, use enhanced ML parsing for unstructured logs
@@ -427,9 +430,8 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
             try:
                 # Use enhanced ML parser with intelligent algorithm selection
                 ml_entries = ml_parser.parse_logs_intelligently(unstructured_lines)
-                
+                print(f"[DEBUG] Enhanced ML parsing produced {len(ml_entries)} entries")
                 if ml_entries:
-                    print(f"[DEBUG] Enhanced ML parsing produced {len(ml_entries)} entries")
                     return JSONResponse(content=ml_entries)
                 else:
                     # ML parsing failed, use regex fallback
@@ -438,6 +440,7 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
                     for line in unstructured_lines:
                         entry = extract_structured_fields_from_ml(content=line)
                         fallback_entries.append(entry)
+                    print(f"[DEBUG] Regex fallback produced {len(fallback_entries)} entries")
                     return JSONResponse(content=fallback_entries)
                     
             except Exception as ml_error:
@@ -447,6 +450,7 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
                 for line in unstructured_lines:
                     entry = extract_structured_fields_from_ml(content=line)
                     fallback_entries.append(entry)
+                print(f"[DEBUG] Regex fallback produced {len(fallback_entries)} entries (exception path)")
                 return JSONResponse(content=fallback_entries)
             
     except Exception as e:

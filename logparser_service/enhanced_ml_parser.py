@@ -273,10 +273,11 @@ class EnhancedMLParser:
         
         # Extract timestamp
         timestamp_patterns = [
-            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})',
+            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?',
             r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?',
             r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]',
             r'(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})',
+            r'\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]',
         ]
         
         for pattern in timestamp_patterns:
@@ -407,10 +408,11 @@ class EnhancedMLParser:
     def _extract_timestamp(self, line: str) -> str:
         """Extract timestamp from a log line"""
         timestamp_patterns = [
-            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})',
+            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?',
             r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?',
             r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]',
             r'(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})',
+            r'\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]',
         ]
         
         for pattern in timestamp_patterns:
@@ -607,6 +609,11 @@ class EnhancedMLParser:
 
     def parse_logs_intelligently(self, lines: List[str]) -> List[Dict[str, Any]]:
         """Intelligently parse logs using ML algorithms"""
+        # --- Robust input normalization ---
+        if isinstance(lines, str):
+            lines = lines.splitlines()
+        elif isinstance(lines, list) and len(lines) == 1 and isinstance(lines[0], str) and '\n' in lines[0]:
+            lines = lines[0].splitlines()
         
         if not lines:
             return []
@@ -629,6 +636,13 @@ class EnhancedMLParser:
                     print(f"[ML] Successfully parsed {len(entries)} entries with {best_algorithm}")
                     entries = self.propagate_fields_across_entries(entries)
                     entries = self.stitch_multiline_logs(entries)
+                    
+                    # --- ALWAYS CHECK: Force split if only 1 entry for many lines ---
+                    if len(entries) == 1 and len(lines) > 10:
+                        print(f"[ML-FORCE] Only 1 entry for {len(lines)} lines, forcing line-by-line fallback parsing.")
+                        entries = self.fallback_parsing(lines)
+                        entries = self.propagate_fields_across_entries(entries)
+                        entries = self.stitch_multiline_logs(entries)
                     return entries
             except Exception as e:
                 print(f"[ML] Primary algorithm {best_algorithm} failed: {e}")
@@ -643,6 +657,13 @@ class EnhancedMLParser:
                             print(f"[ML] Successfully parsed {len(entries)} entries with fallback {algo}")
                             entries = self.propagate_fields_across_entries(entries)
                             entries = self.stitch_multiline_logs(entries)
+                            
+                            # --- ALWAYS CHECK: Force split if only 1 entry for many lines ---
+                            if len(entries) == 1 and len(lines) > 10:
+                                print(f"[ML-FORCE] Only 1 entry for {len(lines)} lines, forcing line-by-line fallback parsing.")
+                                entries = self.fallback_parsing(lines)
+                                entries = self.propagate_fields_across_entries(entries)
+                                entries = self.stitch_multiline_logs(entries)
                             return entries
                     except Exception as e:
                         print(f"[ML] Fallback algorithm {algo} failed: {e}")
@@ -652,6 +673,14 @@ class EnhancedMLParser:
             entries = self.fallback_parsing(lines)
             entries = self.propagate_fields_across_entries(entries)
             entries = self.stitch_multiline_logs(entries)
+            
+            # --- FINAL CHECK: Force split if only 1 entry for many lines ---
+            if len(entries) == 1 and len(lines) > 10:
+                print(f"[ML-FORCE] Only 1 entry for {len(lines)} lines, forcing line-by-line fallback parsing.")
+                entries = self.fallback_parsing(lines)
+                entries = self.propagate_fields_across_entries(entries)
+                entries = self.stitch_multiline_logs(entries)
+            
             return entries
 
 # Global instance
