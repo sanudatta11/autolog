@@ -551,6 +551,13 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 		return
 	}
 
+	// LLM health check before submitting RCA job
+	if err := lc.llmService.CheckLLMHealth(); err != nil {
+		logger.Error("LLM service is not available for RCA job submission", map[string]interface{}{"error": err})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "LLM service is not available. Please try again later."})
+		return
+	}
+
 	// Create and process RCA job with options
 	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking)
 	if err != nil {

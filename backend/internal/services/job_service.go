@@ -85,12 +85,17 @@ func (js *JobService) CreateRCAAnalysisJobWithOptions(logFileID uint, timeout in
 // ProcessRCAAnalysisJobWithShutdown processes an RCA analysis job with shutdown support
 func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-chan struct{}) {
 	completed := false
+	var logFileID *uint // Track logFileID for deferred error handling
 	defer func() {
 		if !completed {
 			js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 				"status": models.JobStatusFailed,
 				"error":  "Job failed due to shutdown or unexpected exit",
 			})
+			// Also set log file rca_analysis_status to 'failed' if logFileID is known
+			if logFileID != nil {
+				js.db.Model(&models.LogFile{}).Where("id = ?", *logFileID).Update("rca_analysis_status", "failed")
+			}
 		}
 	}()
 
@@ -110,8 +115,15 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	if err := js.db.Preload("LogFile").First(&job, jobID).Error; err != nil {
 		logger.Error("Failed to get job details", map[string]interface{}{"jobID": jobID, "error": err})
 		js.updateJobStatus(jobID, models.JobStatusFailed, "Failed to get job details", nil)
+		// Try to get logFileID from job record if possible
+		var jobRecord models.Job
+		if err2 := js.db.First(&jobRecord, jobID).Error; err2 == nil {
+			logFileID = &jobRecord.LogFileID
+			js.db.Model(&models.LogFile{}).Where("id = ?", jobRecord.LogFileID).Update("rca_analysis_status", "failed")
+		}
 		return
 	}
+	logFileID = &job.LogFileID
 
 	// Check for shutdown before starting
 	select {
