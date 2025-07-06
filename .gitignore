@@ -130,3 +130,5 @@ logparser_service/__pycache__/
 
 # AIR build output
 backend/tmp/
+
+backend/autolog

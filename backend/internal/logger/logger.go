@@ -11,15 +11,12 @@ import (
 )
 
 var (
-	Logger     *logrus.Logger // Main application logger (to file)
+	Logger     *logrus.Logger // Main logger instance
 	FileLogger *logrus.Logger // File logger for application logs
 )
 
 // Initialize sets up the loggers with proper configuration
 func Initialize() {
-	// Purge log files on startup
-	purgeLogFiles()
-
 	// Set up file logger for application logs
 	FileLogger = logrus.New()
 
@@ -195,87 +192,4 @@ func Fatal(msg string, fields map[string]interface{}) {
 		fields = make(map[string]interface{})
 	}
 	GetLogger().WithFields(fields).Fatal(msg)
-}
-
-// Simple convenience functions (without fields) - Application logs
-func Debugf(msg string) {
-	GetLogger().Debug(msg)
-}
-
-func Infof(msg string) {
-	GetLogger().Info(msg)
-}
-
-func Warnf(msg string) {
-	GetLogger().Warn(msg)
-}
-
-func Errorf(msg string) {
-	GetLogger().Error(msg)
-}
-
-func Fatalf(msg string) {
-	GetLogger().Fatal(msg)
-}
-
-// purgeLogFiles removes all log files on startup to keep the system clean
-func purgeLogFiles() {
-	// Purge application logs
-	purgeDirectory("logs", []string{".log", ".tmp"})
-
-	// Purge uploaded log files
-	purgeDirectory("uploads/logs", []string{".json", ".txt", ".log", ".csv", ".xml", ".yaml", ".yml"})
-
-	fmt.Println("✅ All log files purged successfully")
-}
-
-// purgeDirectory removes files with specified extensions from a directory
-func purgeDirectory(dirPath string, extensions []string) {
-	// Check if directory exists
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		// Directory doesn't exist, nothing to purge
-		return
-	}
-
-	// Read all files in the directory
-	files, err := os.ReadDir(dirPath)
-	if err != nil {
-		fmt.Printf("Failed to read directory %s: %v\n", dirPath, err)
-		return
-	}
-
-	// Remove files with matching extensions
-	purgedCount := 0
-	for _, file := range files {
-		if !file.IsDir() {
-			fileName := file.Name()
-			shouldPurge := false
-
-			for _, ext := range extensions {
-				if strings.HasSuffix(fileName, ext) {
-					shouldPurge = true
-					break
-				}
-			}
-
-			if shouldPurge {
-				filePath := fmt.Sprintf("%s/%s", dirPath, fileName)
-				if err := os.Remove(filePath); err != nil {
-					fmt.Printf("Failed to remove file %s: %v\n", filePath, err)
-				} else {
-					fmt.Printf("Purged: %s\n", filePath)
-					purgedCount++
-				}
-			}
-		}
-	}
-
-	if purgedCount > 0 {
-		fmt.Printf("✅ Purged %d files from %s\n", purgedCount, dirPath)
-	}
-}
-
-// PurgeAllLogs is a public function that can be called manually to purge all log files
-func PurgeAllLogs() {
-	purgeLogFiles()
 }

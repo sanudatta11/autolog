@@ -24,7 +24,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [useChunking, setUseChunking] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [logFileDetails, setLogFileDetails] = useState(null);
-  const [pollingEnabled, setPollingEnabled] = React.useContext(PollingContext);
+  const { pollingEnabled, setPollingEnabled } = React.useContext(PollingContext);
   const [showResults, setShowResults] = useState(false);
 
   // Add modal state
@@ -188,10 +188,10 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         return;
       }
       
-      console.log('Submitting feedback to:', `/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`);
+      console.log('Submitting feedback to:', `/analyses/${completedJob.analysisMemoryId}/feedback`);
       console.log('Feedback data:', { isCorrect, correction });
       
-      await api.post(`/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`, {
+      await api.post(`/analyses/${completedJob.analysisMemoryId}/feedback`, {
         isCorrect,
         correction,
       });
@@ -307,7 +307,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     if (status === 'completed' && results) {
       return (
         <button className="btn btn-primary" onClick={getResults}>
-          View Results
+          👁 View Details
         </button>
       );
     }
@@ -343,7 +343,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       for (const job of jobs) {
         if (job.analysisMemoryId) {
           try {
-            const res = await api.get(`/api/v1/analyses/${job.analysisMemoryId}/feedback`);
+            const res = await api.get(`/analyses/${job.analysisMemoryId}/feedback`);
             if (res.data.feedback && res.data.feedback.length > 0) {
               feedbackMap[job.id] = res.data.feedback[0];
             }
@@ -434,10 +434,17 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       {status === 'completed' && results && (
         <>
           <button
-            className="w-full flex items-center justify-center gap-2 btn btn-secondary mb-2"
-            onClick={() => setShowResults(v => !v)}
+            className={`w-full flex items-center justify-center gap-2 btn mb-2 ${
+              showResults ? 'btn-secondary bg-red-100 text-red-700 border-red-300' : 'btn-secondary'
+            }`}
+            onClick={() => {
+              setShowResults(v => !v);
+              if (!showResults) {
+                setResults(null);
+              }
+            }}
           >
-            {showResults ? 'Hide Results' : 'View Results'}
+            {showResults ? '✕ Close Details' : '👁 View Details'}
           </button>
           {/* Feedback Form always visible after RCA completion */}
           <div className="mt-6 p-4 border rounded bg-gray-50">
@@ -648,8 +655,10 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
               </tr>
             </thead>
             <tbody>
-              {jobs.map((job, idx) => (
-                  <tr key={job.id} className={idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'}>
+              {jobs.map((job, idx) => {
+                const hasReview = jobFeedbacks[job.id] !== undefined;
+                return (
+                  <tr key={job.id} className={`${idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'} ${showResults && results === job.result ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}>
                     <td className="px-3 py-2">{jobs.length - idx}</td>
                     <td className="px-3 py-2">
                       <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${
@@ -669,19 +678,8 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                     <td className="px-3 py-2 text-right">{job.totalChunks || '-'}</td>
                     <td className="px-3 py-2 text-right">{job.failedChunk || '-'}</td>
                     <td className="px-3 py-2 text-center space-x-1">
-                      <button
-                        className="inline-block px-2 py-1 rounded bg-blue-500 text-white text-xs font-medium disabled:opacity-50"
-                        disabled={job.status !== 'completed'}
-                        title="View Results"
-                        onClick={() => {
-                          setResults(job.result);
-                          setShowResults(true);
-                        }}
-                      >
-                        View
-                      </button>
                       {job.status === 'completed' && (
-                        jobFeedbacks[job.id] ? (
+                        hasReview ? (
                           <button className="inline-block px-2 py-1 rounded bg-green-400 text-white text-xs font-medium opacity-60 cursor-not-allowed" disabled>Reviewed</button>
                         ) : (
                           <button
@@ -709,7 +707,8 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                     )}
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         )}
@@ -731,7 +730,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                 e.preventDefault();
                 setReviewSubmitting(true);
                 try {
-                  await api.post(`/api/v1/analyses/${reviewTargetJob.analysisMemoryId}/feedback`, {
+                  await api.post(`/analyses/${reviewTargetJob.analysisMemoryId}/feedback`, {
                     isCorrect: reviewIsCorrect,
                     correction: reviewCorrection,
                   });

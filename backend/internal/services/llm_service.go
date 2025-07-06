@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"math"
-	"regexp"
 	"sync"
 
 	"github.com/autolog/backend/internal/logger"
@@ -70,25 +69,14 @@ type DetailedErrorAnalysis struct {
 	ErrorCount      int      `json:"errorCount"`
 	FirstOccurrence string   `json:"firstOccurrence"`
 	LastOccurrence  string   `json:"lastOccurrence"`
-	Severity        string   `json:"severity"` // "critical" or "non-critical"
+	Severity        string   `json:"severity"`
 	RootCause       string   `json:"rootCause"`
 	Impact          string   `json:"impact"`
 	Fix             string   `json:"fix"`
 	RelatedErrors   []string `json:"relatedErrors"`
 }
 
-// Embedding request/response for Ollama
-
-type OllamaEmbeddingRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-}
-
-type OllamaEmbeddingResponse struct {
-	Embedding []float32 `json:"embedding"`
-}
-
-// LLMAPI Call tracking
+// LLMAPICall tracks individual LLM API calls for monitoring and debugging
 type LLMAPICall struct {
 	ID        string                 `json:"id"`
 	Timestamp time.Time              `json:"timestamp"`
@@ -96,12 +84,23 @@ type LLMAPICall struct {
 	Model     string                 `json:"model"`
 	LogFileID *uint                  `json:"logFileId,omitempty"`
 	JobID     *uint                  `json:"jobId,omitempty"`
-	CallType  string                 `json:"callType"` // "format_inference", "rca_analysis", "rca_aggregation", "embedding", etc.
-	Payload   map[string]interface{} `json:"payload"`
+	CallType  string                 `json:"callType"`
+	Payload   map[string]interface{} `json:"payload,omitempty"`
 	Status    int                    `json:"status"`
 	Duration  time.Duration          `json:"duration"`
-	Response  string                 `json:"response"`
+	Response  string                 `json:"response,omitempty"`
 	Error     string                 `json:"error,omitempty"`
+}
+
+// OllamaEmbeddingRequest represents a request to generate embeddings
+type OllamaEmbeddingRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+}
+
+// OllamaEmbeddingResponse represents the response from the embedding API
+type OllamaEmbeddingResponse struct {
+	Embedding []float32 `json:"embedding"`
 }
 
 func NewLLMService(baseURL, llmModel string) *LLMService {
@@ -311,10 +310,17 @@ func (ls *LLMService) AnalyzeLogsWithAIWithTimeout(logFile *models.LogFile, entr
 		logEntry.Error("LLM returned incomplete analysis")
 		return nil, fmt.Errorf("LLM returned incomplete analysis (missing summary or root cause)")
 	}
+
+	logEntry.Info("AI analysis completed successfully", map[string]interface{}{
+		"severity":          analysis.Severity,
+		"summary_length":    len(analysis.Summary),
+		"root_cause_length": len(analysis.RootCause),
+	})
+
 	return analysis, nil
 }
 
-// Filter only ERROR and FATAL log entries
+// filterErrorEntries filters only ERROR and FATAL log entries
 func (ls *LLMService) filterErrorEntries(entries []models.LogEntry) []models.LogEntry {
 	var errorEntries []models.LogEntry
 	for _, entry := range entries {
@@ -325,226 +331,122 @@ func (ls *LLMService) filterErrorEntries(entries []models.LogEntry) []models.Log
 	return errorEntries
 }
 
+// generateNoErrorsAnalysis creates a basic analysis when no errors are found
+func (ls *LLMService) generateNoErrorsAnalysis(logFile *models.LogFile) *LogAnalysisResponse {
+	return &LogAnalysisResponse{
+		Summary:           fmt.Sprintf("Log file '%s' contains no ERROR or FATAL entries. System appears to be functioning normally.", logFile.Filename),
+		Severity:          "low",
+		RootCause:         "No errors detected in the log file",
+		Recommendations:   []string{"Continue monitoring for any new errors", "Review INFO and WARNING logs for potential issues", "System is operating within normal parameters"},
+		ErrorAnalysis:     []DetailedErrorAnalysis{},
+		CriticalErrors:    0,
+		NonCriticalErrors: 0,
+	}
+}
+
+// createDetailedErrorAnalysisPrompt creates a comprehensive prompt for error analysis
 func (ls *LLMService) createDetailedErrorAnalysisPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry, similarIncidents string) string {
-	// Create a structured prompt focused on error analysis
-	prompt := fmt.Sprintf(`You are an expert DevOps/SRE engineer performing detailed Root Cause Analysis (RCA) on system errors.
-
-Analyze the following ERROR and FATAL log entries to provide a comprehensive error analysis:
-
-LOG FILE: %s
-TOTAL ERROR ENTRIES: %d
-TIME RANGE: %s to %s
-
-ERROR ENTRIES TO ANALYZE:
-`, request.Filename, len(errorEntries),
-		request.StartTime.Format("2006-01-02 15:04:05"), request.EndTime.Format("2006-01-02 15:04:05"))
-
-	// Add error entries (limit to prevent timeout on very large files)
-	maxEntries := 50 // Limit to prevent timeout
-	if len(errorEntries) > maxEntries {
-		prompt += fmt.Sprintf("NOTE: Showing first %d of %d error entries for analysis\n\n", maxEntries, len(errorEntries))
-		errorEntries = errorEntries[:maxEntries]
+	// Build the error entries section
+	var errorEntriesText strings.Builder
+	for i, entry := range errorEntries {
+		errorEntriesText.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, entry.Timestamp.Format("2006-01-02 15:04:05"), entry.Message))
 	}
 
-	for _, entry := range errorEntries {
-		prompt += fmt.Sprintf("[%s] %s: %s\n",
-			entry.Timestamp.Format("15:04:05"),
-			entry.Level,
-			entry.Message)
-
-		// Add context information from normalized schema
-		contextInfo := []string{}
-		if entry.Service != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("service=%s", entry.Service))
-		}
-		if entry.Host != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("host=%s", entry.Host))
-		}
-		if entry.Environment != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("env=%s", entry.Environment))
-		}
-		if entry.ErrorCode != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("error_code=%s", entry.ErrorCode))
-		}
-		if entry.CorrelationId != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("correlation_id=%s", entry.CorrelationId))
-		}
-		if len(entry.Tags) > 0 {
-			contextInfo = append(contextInfo, fmt.Sprintf("tags=%v", entry.Tags))
-		}
-		if entry.Exception.Type != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("exception_type=%s", entry.Exception.Type))
-		}
-		if entry.Context.TransactionId != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("transaction_id=%s", entry.Context.TransactionId))
-		}
-		if entry.Context.UserId != "" {
-			contextInfo = append(contextInfo, fmt.Sprintf("user_id=%s", entry.Context.UserId))
-		}
-
-		if len(contextInfo) > 0 {
-			contextStr := strings.Join(contextInfo, ", ")
-			if len(contextStr) > 500 { // Limit context size
-				prompt += fmt.Sprintf("  Context: %s... (truncated)\n", contextStr[:500])
-			} else {
-				prompt += fmt.Sprintf("  Context: %s\n", contextStr)
-			}
-		}
-		// Add metadata if present
-		if entry.Metadata != nil && len(entry.Metadata) > 0 {
-			metadata, _ := json.Marshal(entry.Metadata)
-			if len(metadata) > 500 {
-				prompt += fmt.Sprintf("  Metadata: %s... (truncated)\n", string(metadata[:500]))
-			} else {
-				prompt += fmt.Sprintf("  Metadata: %s\n", string(metadata))
-			}
-		}
-	}
-
-	if similarIncidents != "" {
-		prompt += "\nSIMILAR PAST INCIDENTS (for reference):\n" + similarIncidents + "\n"
-	}
-
-	prompt += `
-
-Perform a DEEP Root Cause Analysis and provide your findings in the following JSON format:
-
-{
-  "summary": "A concise summary focusing on the most critical errors and their impact (2-3 sentences)",
-  "severity": "low|medium|high|critical",
-  "rootCause": "The primary root cause that explains most of the errors, with step-by-step reasoning",
-  "reasoning": "Step-by-step logical reasoning that led you to the root cause, referencing log evidence",
-  "recommendations": ["specific_action1", "specific_action2", "specific_action3"],
-  "furtherInvestigation": "What additional data or logs would help confirm the root cause?",
-  "errorAnalysis": [
-    {
-      "errorPattern": "The pattern or category of this error (e.g., 'Database Connection Timeout', 'Authentication Failure')",
-      "errorCount": 5,
-      "firstOccurrence": "2024-01-15 10:30:00",
-      "lastOccurrence": "2024-01-15 11:45:00",
-      "severity": "critical|non-critical",
-      "rootCause": "Specific root cause for this error pattern",
-      "impact": "What is broken or affected by this error",
-      "fix": "Specific fix or solution for this error pattern",
-      "relatedErrors": ["related_error_message1", "related_error_message2"]
-    }
-  ],
-  "criticalErrors": 3,
-  "nonCriticalErrors": 2
-}
-
-ANALYSIS REQUIREMENTS:
-1. Focus ONLY on ERROR and FATAL entries - ignore INFO and DEBUG logs
-2. Group similar errors into patterns
-3. Classify each error pattern as "critical" or "non-critical" based on:
-   - Critical: Service outages, data loss, security issues, cascading failures
-   - Non-critical: Temporary issues, retryable errors, minor performance issues
-4. Provide a step-by-step logical reasoning for the root cause, referencing log evidence
-5. Suggest what additional data or logs would help confirm the root cause
-6. Be as specific and actionable as possible in your recommendations
-7. Output valid JSON only
-8. If you find similar past incidents, reference them in your reasoning
-
-IMPORTANT RESPONSE INSTRUCTIONS:
-- Respond with valid, minified JSON only. Do not include any explanation, markdown, or extra text.
-- Do not include any comments, markdown code blocks, or any text before or after the JSON.
-- Do not pretty-print or add newlines; output must be a single-line JSON object.
-- If you cannot answer, return an empty JSON object: {}
-`
+	// Build the prompt using the constant
+	prompt := fmt.Sprintf(RCA_ANALYSIS_PROMPT,
+		request.Filename,
+		request.ErrorCount,
+		request.WarningCount,
+		request.StartTime.Format("2006-01-02 15:04:05"),
+		request.EndTime.Format("2006-01-02 15:04:05"),
+		errorEntriesText.String(),
+		similarIncidents)
 
 	return prompt
 }
 
-// CreateDetailedErrorAnalysisPromptWithLearning creates a prompt with learning insights
-func (ls *LLMService) CreateDetailedErrorAnalysisPromptWithLearning(request LogAnalysisRequest, errorEntries []models.LogEntry, learningInsights *LearningInsights) string {
-	// Create base prompt
-	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, learningInsights.SuggestedContext)
-
-	// Add learning confidence information
-	if learningInsights.ConfidenceBoost > 0 {
-		prompt += fmt.Sprintf("\n\nLEARNING INSIGHTS:\n- Analysis confidence boosted by %.1f%% based on similar past incidents\n", learningInsights.ConfidenceBoost*100)
-	}
-
-	if len(learningInsights.PatternMatches) > 0 {
-		prompt += "- Identified patterns from historical analysis that may be relevant\n"
-	}
-
-	return prompt
-}
-
+// CreateDetailedErrorAnalysisPrompt is the public version of createDetailedErrorAnalysisPrompt
 func (ls *LLMService) CreateDetailedErrorAnalysisPrompt(request LogAnalysisRequest, errorEntries []models.LogEntry, similarIncidents string) string {
 	return ls.createDetailedErrorAnalysisPrompt(request, errorEntries, similarIncidents)
 }
 
-func (ls *LLMService) callLLM(prompt string) (string, error) {
-	startTime := time.Now()
-
-	request := OllamaGenerateRequest{
-		Model:  ls.llmModel,
-		Prompt: prompt,
-		Stream: false,
-		Options: map[string]interface{}{
-			"temperature": 0.2, // Even lower temperature for more consistent analysis
-			"top_p":       0.8,
-		},
+// CreateDetailedErrorAnalysisPromptWithLearning creates a prompt enhanced with historical learning insights
+func (ls *LLMService) CreateDetailedErrorAnalysisPromptWithLearning(request LogAnalysisRequest, errorEntries []models.LogEntry, learningInsights *LearningInsights) string {
+	// Build the error entries section
+	var errorEntriesText strings.Builder
+	for i, entry := range errorEntries {
+		errorEntriesText.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, entry.Timestamp.Format("2006-01-02 15:04:05"), entry.Message))
 	}
 
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		logger.WithError(err, "llm_service").Error("Failed to marshal LLM request")
-		ls.TrackAPICall(nil, nil, "general", map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+	// Convert learning insights to string format
+	insightsText := ls.formatLearningInsights(learningInsights)
+
+	// Build the prompt using the learning-enhanced constant
+	prompt := fmt.Sprintf(LEARNING_ENHANCED_PROMPT,
+		request.Filename,
+		request.ErrorCount,
+		request.WarningCount,
+		request.StartTime.Format("2006-01-02 15:04:05"),
+		request.EndTime.Format("2006-01-02 15:04:05"),
+		errorEntriesText.String(),
+		insightsText)
+
+	return prompt
+}
+
+// formatLearningInsights converts LearningInsights to a formatted string for LLM consumption
+func (ls *LLMService) formatLearningInsights(insights *LearningInsights) string {
+	if insights == nil {
+		return ""
 	}
 
-	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
-	logger.Debug("Making LLM request", map[string]interface{}{
-		"url":           url,
-		"prompt_length": len(prompt),
-		"model":         ls.llmModel,
-	})
+	var result strings.Builder
 
-	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt)}
-
-	resp, err := ls.client.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	elapsed := time.Since(startTime)
-
-	if err != nil {
-		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
-			"elapsed": elapsed,
-		})
-		ls.TrackAPICall(nil, nil, "general", payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
-		return "", fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	logger.Debug("LLM request completed", map[string]interface{}{
-		"elapsed":     elapsed,
-		"status_code": resp.StatusCode,
-	})
-
-	if resp.StatusCode != http.StatusOK {
-		var respBodyBytes []byte
-		respBodyBytes, _ = io.ReadAll(resp.Body)
-		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
-		ls.TrackAPICall(nil, nil, "general", payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
-		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+	// Add similar incidents
+	if len(insights.SimilarIncidents) > 0 {
+		result.WriteString("SIMILAR PAST INCIDENTS:\n")
+		for i, incident := range insights.SimilarIncidents {
+			result.WriteString(fmt.Sprintf("%d. File: %s (Similarity: %.2f%%)\n", i+1, incident.Filename, incident.Similarity*100))
+			result.WriteString(fmt.Sprintf("   Summary: %s\n", incident.Summary))
+			result.WriteString(fmt.Sprintf("   Root Cause: %s\n", incident.RootCause))
+			result.WriteString(fmt.Sprintf("   Severity: %s\n", incident.Severity))
+			result.WriteString(fmt.Sprintf("   Relevance: %s\n\n", incident.Relevance))
+		}
 	}
 
-	var ollamaResp OllamaGenerateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
-		ls.TrackAPICall(nil, nil, "general", payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
-		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
+	// Add pattern matches
+	if len(insights.PatternMatches) > 0 {
+		result.WriteString("IDENTIFIED PATTERNS:\n")
+		for i, match := range insights.PatternMatches {
+			result.WriteString(fmt.Sprintf("%d. Pattern: %s (Confidence: %.2f%%)\n", i+1, match.Pattern.Name, match.Confidence*100))
+			result.WriteString(fmt.Sprintf("   Description: %s\n", match.Pattern.Description))
+			result.WriteString(fmt.Sprintf("   Root Cause: %s\n", match.Pattern.RootCause))
+			result.WriteString(fmt.Sprintf("   Common Fixes: %s\n", strings.Join(match.Pattern.CommonFixes, "; ")))
+			result.WriteString(fmt.Sprintf("   Match Reason: %s\n", match.MatchReason))
+			result.WriteString(fmt.Sprintf("   Relevance: %s\n\n", match.Relevance))
+		}
 	}
 
-	logger.Debug("LLM response decoded successfully", map[string]interface{}{
-		"response_length": len(ollamaResp.Response),
-		"model":           ollamaResp.Model,
-	})
+	// Add confidence boost
+	if insights.ConfidenceBoost > 0 {
+		result.WriteString(fmt.Sprintf("CONFIDENCE BOOST: %.2f%%\n", insights.ConfidenceBoost*100))
+	}
 
-	ls.TrackAPICall(nil, nil, "general", payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+	// Add suggested context
+	if insights.SuggestedContext != "" {
+		result.WriteString(fmt.Sprintf("SUGGESTED CONTEXT: %s\n", insights.SuggestedContext))
+	}
 
-	return ollamaResp.Response, nil
+	// Add learning metrics
+	if insights.LearningMetrics.TotalAnalyses > 0 {
+		result.WriteString(fmt.Sprintf("LEARNING METRICS:\n"))
+		result.WriteString(fmt.Sprintf("- Total Analyses: %d\n", insights.LearningMetrics.TotalAnalyses))
+		result.WriteString(fmt.Sprintf("- Pattern Matches: %d\n", insights.LearningMetrics.PatternMatches))
+		result.WriteString(fmt.Sprintf("- Accuracy Improvement: %.2f%%\n", insights.LearningMetrics.AccuracyImprovement*100))
+		result.WriteString(fmt.Sprintf("- Average Confidence: %.2f%%\n", insights.LearningMetrics.AverageConfidence*100))
+	}
+
+	return result.String()
 }
 
 // callLLMWithContext makes an LLM call with context information for tracking
@@ -704,94 +606,6 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 	return ollamaResp.Response, nil
 }
 
-func (ls *LLMService) callLLMWithTimeout(prompt string, timeout int) (string, error) {
-	callID := fmt.Sprintf("llm_timeout_%d", time.Now().UnixNano())
-	startTime := time.Now()
-
-	request := OllamaGenerateRequest{
-		Model:  ls.llmModel,
-		Prompt: prompt,
-		Stream: false,
-		Options: map[string]interface{}{
-			"temperature": 0.2,
-			"top_p":       0.8,
-		},
-	}
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		ls.addAPICall(LLMAPICall{
-			ID:        callID,
-			Timestamp: startTime,
-			Endpoint:  "/api/generate",
-			Model:     ls.llmModel,
-			Payload:   map[string]interface{}{"prompt": prompt, "timeout": timeout, "error": "marshal_failed"},
-			Status:    0,
-			Duration:  time.Since(startTime),
-			Error:     fmt.Sprintf("failed to marshal request: %v", err),
-		})
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
-	logger.Debug("Making LLM request", map[string]interface{}{
-		"url":           url,
-		"prompt_length": len(prompt),
-		"model":         ls.llmModel,
-		"timeout":       timeout,
-	})
-	client := ls.client
-	if timeout > 0 {
-		client = &http.Client{Timeout: time.Duration(timeout) * time.Second}
-	}
-
-	apiCall := LLMAPICall{
-		ID:        callID,
-		Timestamp: startTime,
-		Endpoint:  "/api/generate",
-		Model:     ls.llmModel,
-		Payload:   map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt), "timeout": timeout},
-		Duration:  time.Since(startTime),
-	}
-
-	resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	elapsed := time.Since(startTime)
-
-	if err != nil {
-		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
-			"elapsed": elapsed,
-		})
-		apiCall.Status = 0
-		apiCall.Error = fmt.Sprintf("HTTP request failed: %v", err)
-		ls.addAPICall(apiCall)
-		return "", fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	logger.Debug("LLM request completed", map[string]interface{}{
-		"elapsed":     elapsed,
-		"status_code": resp.StatusCode,
-	})
-	apiCall.Status = resp.StatusCode
-
-	if resp.StatusCode != http.StatusOK {
-		var respBodyBytes []byte
-		respBodyBytes, _ = io.ReadAll(resp.Body)
-		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
-		apiCall.Error = fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
-		ls.addAPICall(apiCall)
-		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
-	}
-	var ollamaResp OllamaGenerateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
-		apiCall.Error = fmt.Sprintf("failed to decode Ollama response: %v", err)
-		ls.addAPICall(apiCall)
-		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
-	}
-	apiCall.Response = ollamaResp.Response
-	ls.addAPICall(apiCall)
-
-	return ollamaResp.Response, nil
-}
-
 // extractAndCleanJSON attempts to extract valid JSON from a potentially malformed response
 func (ls *LLMService) extractAndCleanJSON(response string) string {
 	response = strings.TrimSpace(response)
@@ -910,149 +724,56 @@ func (ls *LLMService) parseDetailedLLMResponse(response string) (*LogAnalysisRes
 	// Try to parse the JSON as-is first
 	var analysis LogAnalysisResponse
 	if err := json.Unmarshal([]byte(cleanResponse), &analysis); err != nil {
-		logger.WithError(err, "llm_service").Error("Failed to parse JSON from LLM, attempting to fix common issues")
+		logger.WithError(err, "llm_service").Error("Failed to parse LLM response as JSON")
+		logger.Debug("Raw LLM response", map[string]interface{}{"response": response})
+		logger.Debug("Cleaned response", map[string]interface{}{"response": cleanResponse})
 
-		// Try to fix common JSON syntax errors
-		fixedResponse := ls.attemptToFixJSON(cleanResponse)
-		if fixedResponse != cleanResponse {
-			logger.Debug("Attempting to parse fixed JSON", nil)
-			if err := json.Unmarshal([]byte(fixedResponse), &analysis); err != nil {
-				logger.WithError(err, "llm_service").Error("Failed to parse fixed JSON from LLM")
-
-				// Final fallback: try to extract basic information from the response
-				fallbackAnalysis := ls.createFallbackAnalysis(response)
-				if fallbackAnalysis != nil {
-					logger.Info("Created fallback analysis due to JSON parsing failure", nil)
-					return fallbackAnalysis, nil
-				}
-
-				return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
-			}
-		} else {
-			logger.WithError(err, "llm_service").Error("Failed to parse JSON from LLM")
-
-			// Final fallback: try to extract basic information from the response
-			fallbackAnalysis := ls.createFallbackAnalysis(response)
-			if fallbackAnalysis != nil {
-				logger.Info("Created fallback analysis due to JSON parsing failure", nil)
-				return fallbackAnalysis, nil
-			}
-
-			return nil, fmt.Errorf("failed to parse JSON response: %w. Raw response: %q", err, cleanResponse)
+		// Try to create a fallback analysis from the text
+		fallbackAnalysis := ls.createFallbackAnalysis(response)
+		if fallbackAnalysis.Summary == "" || fallbackAnalysis.RootCause == "" {
+			return nil, fmt.Errorf("failed to parse LLM response and fallback analysis is incomplete: %w", err)
 		}
+		return fallbackAnalysis, nil
 	}
 
-	// Validate and normalize the response
-	if analysis.Summary == "" {
-		analysis.Summary = "Error analysis completed but no summary generated."
-	}
-
-	if analysis.RootCause == "" {
-		analysis.RootCause = "Unable to determine root cause"
+	// Validate the parsed analysis
+	if analysis.Summary == "" || analysis.RootCause == "" {
+		logger.WithError(fmt.Errorf("incomplete analysis"), "llm_service").Error("LLM returned incomplete analysis")
+		return nil, fmt.Errorf("LLM returned incomplete analysis (missing summary or root cause)")
 	}
 
 	// Normalize severity
 	analysis.Severity = ls.normalizeSeverity(analysis.Severity)
 
-	// Validate error analysis
-	if analysis.ErrorAnalysis == nil {
-		analysis.ErrorAnalysis = []DetailedErrorAnalysis{}
-	}
-
-	// Normalize error analysis severity
+	// Process error analysis entries
 	for i := range analysis.ErrorAnalysis {
 		analysis.ErrorAnalysis[i].Severity = ls.normalizeErrorSeverity(analysis.ErrorAnalysis[i].Severity)
-	}
-
-	// Ensure recommendations is not nil
-	if analysis.Recommendations == nil {
-		analysis.Recommendations = []string{}
+		analysis.ErrorAnalysis[i].ErrorPattern = ls.extractErrorPattern(analysis.ErrorAnalysis[i].ErrorPattern)
 	}
 
 	return &analysis, nil
 }
 
-// attemptToFixJSON tries to fix common JSON syntax errors
-func (ls *LLMService) attemptToFixJSON(jsonStr string) string {
-	// Fix double-escaped quotes: \" -> "
-	jsonStr = strings.ReplaceAll(jsonStr, `\"`, `"`)
-
-	// Fix double-escaped newlines: \\n -> \n
-	jsonStr = strings.ReplaceAll(jsonStr, `\\n`, `\n`)
-
-	// Fix double-escaped tabs: \\t -> \t
-	jsonStr = strings.ReplaceAll(jsonStr, `\\t`, `\t`)
-
-	// Fix double-escaped backslashes: \\ -> \
-	jsonStr = strings.ReplaceAll(jsonStr, `\\`, `\`)
-
-	// Remove stray \n before property names (not inside strings)
-	re := regexp.MustCompile(`,?\\n\s*"([a-zA-Z0-9_]+"):`)
-	jsonStr = re.ReplaceAllString(jsonStr, `,"$1:`)
-
-	// Remove any remaining stray \n not inside strings
-	re = regexp.MustCompile(`\\n`)
-	jsonStr = re.ReplaceAllString(jsonStr, "")
-
-	// Now apply the previous comma-fixing logic
-	re = regexp.MustCompile(`([^",{\[])
-\s*"([a-zA-Z0-9_]+"):`)
-	jsonStr = re.ReplaceAllString(jsonStr, `$1,\n"$2:`)
-
-	re = regexp.MustCompile(`\{,`)
-	jsonStr = re.ReplaceAllString(jsonStr, "{")
-
-	jsonStr = strings.ReplaceAll(jsonStr, ",,", ",")
-	jsonStr = strings.ReplaceAll(jsonStr, ",}", "}")
-	jsonStr = strings.ReplaceAll(jsonStr, ",]", "]")
-
-	// Insert a comma between a closing quote/bracket/number and an immediately following property name (quote)
-	re = regexp.MustCompile(`(["}\]0-9])\s*"([a-zA-Z0-9_]+"):`)
-	jsonStr = re.ReplaceAllString(jsonStr, `$1,"$2:`)
-
-	// Fix unescaped quotes inside string values
-	// This is a more sophisticated approach to handle quotes that should be escaped
-	// Look for patterns like: "key": "value with "quotes" inside"
-	re = regexp.MustCompile(`"([^"]*)"([^"]*)"([^"]*)"`)
-	jsonStr = re.ReplaceAllStringFunc(jsonStr, func(match string) string {
-		// If this looks like a key-value pair with unescaped quotes, fix it
-		if strings.Contains(match, `":`) {
-			// Escape the inner quotes
-			parts := strings.Split(match, `":`)
-			if len(parts) >= 2 {
-				key := parts[0]
-				value := strings.Join(parts[1:], `":`)
-				// Escape quotes in the value part
-				value = strings.ReplaceAll(value, `"`, `\"`)
-				return key + `":` + value
-			}
-		}
-		return match
-	})
-
-	return jsonStr
-}
-
+// normalizeSeverity normalizes severity values to standard format
 func (ls *LLMService) normalizeSeverity(severity string) string {
 	severity = strings.ToLower(strings.TrimSpace(severity))
-
 	switch severity {
-	case "low", "minor":
-		return "low"
-	case "medium", "moderate":
-		return "medium"
+	case "critical", "fatal", "severe":
+		return "high"
 	case "high", "major":
 		return "high"
-	case "critical", "fatal":
-		return "critical"
+	case "medium", "moderate":
+		return "medium"
+	case "low", "minor", "info":
+		return "low"
 	default:
 		return "medium"
 	}
 }
 
+// normalizeErrorSeverity normalizes error severity values
 func (ls *LLMService) normalizeErrorSeverity(severity string) string {
 	severity = strings.ToLower(strings.TrimSpace(severity))
-
 	switch severity {
 	case "critical", "fatal", "severe":
 		return "critical"
@@ -1060,19 +781,6 @@ func (ls *LLMService) normalizeErrorSeverity(severity string) string {
 		return "non-critical"
 	default:
 		return "non-critical"
-	}
-}
-
-func (ls *LLMService) generateNoErrorsAnalysis(logFile *models.LogFile) *LogAnalysisResponse {
-	return &LogAnalysisResponse{
-		Summary:         fmt.Sprintf("Log file '%s' contains no ERROR or FATAL entries. System appears to be functioning normally.", logFile.Filename),
-		Severity:        "low",
-		RootCause:       "No errors detected",
-		Recommendations: []string{"Continue monitoring for any new errors", "Review INFO and WARNING logs for potential issues"},
-
-		ErrorAnalysis:     []DetailedErrorAnalysis{},
-		CriticalErrors:    0,
-		NonCriticalErrors: 0,
 	}
 }
 
@@ -1109,17 +817,11 @@ func (ls *LLMService) extractErrorPattern(message string) string {
 
 // CheckLLMHealth verifies if the local LLM is available
 func (ls *LLMService) CheckLLMHealth() error {
-	url := fmt.Sprintf("%s/api/tags", ls.baseURL)
-	resp, err := ls.client.Get(url)
+	// Use a simple health check prompt to verify LLM functionality
+	_, err := ls.callLLMWithContext(HEALTH_CHECK_PROMPT, nil, nil, "health_check")
 	if err != nil {
 		return fmt.Errorf("LLM service not available: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("LLM service returned status %d", resp.StatusCode)
-	}
-
 	return nil
 }
 
@@ -1178,6 +880,19 @@ func (ls *LLMService) GenerateEmbedding(text string) ([]float32, error) {
 	return embeddingResp.Embedding, nil
 }
 
+// GenerateEmbeddingForAnalysis generates an embedding specifically for log analysis using the optimized prompt
+func (ls *LLMService) GenerateEmbeddingForAnalysis(summary, rootCause, severity string, errorPatterns []string) ([]float32, error) {
+	patternsText := strings.Join(errorPatterns, ", ")
+	prompt := fmt.Sprintf(EMBEDDING_PROMPT, summary, rootCause, severity, patternsText)
+	return ls.GenerateEmbedding(prompt)
+}
+
+// CreateAggregationPrompt creates a prompt for aggregating multiple chunk analyses
+func (ls *LLMService) CreateAggregationPrompt(logFileName string, chunkAnalyses []string) string {
+	analysesText := strings.Join(chunkAnalyses, "\n\n---\n\n")
+	return fmt.Sprintf(RCA_AGGREGATION_PROMPT, logFileName, analysesText)
+}
+
 // FindSimilarAnalyses finds the top-N most similar past analyses by embedding cosine similarity
 func (ls *LLMService) FindSimilarAnalyses(db *gorm.DB, embedding []float32, topN int) ([]models.LogAnalysisMemory, error) {
 	var memories []models.LogAnalysisMemory
@@ -1228,23 +943,7 @@ func cosineSimilarity(a, b []float32) float64 {
 
 // InferLogFormatFromSamples asks the LLM to infer a log format string from sample log lines
 func (ls *LLMService) InferLogFormatFromSamples(samples []string, logFileID *uint) (string, error) {
-	prompt := fmt.Sprintf(`You are a log parsing expert. Analyze these log lines and return ONLY a logpai/logparser format string.
-
-CRITICAL INSTRUCTIONS:
-- Return ONLY the format string
-- No explanations, no markdown, no extra text
-- No colons, no quotes, no "Here is..." text
-- Just the format string, nothing else
-
-Example format strings:
-- <Date> <Time> <Level>: <Content>
-- <Level> <Time> <Content>
-- <Date> <Time> <Level> <Content>
-
-Log lines to analyze:
-%s
-
-Format string:`, strings.Join(samples, "\n"))
+	prompt := fmt.Sprintf(LOG_FORMAT_INFERENCE_PROMPT, strings.Join(samples, "\n"))
 	logger.Debug("Prompting LLM for log format inference", map[string]interface{}{
 		"prompt_length": len(prompt),
 	})

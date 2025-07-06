@@ -15,6 +15,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const ENABLE_LOG_FILE_FLUSH = false
+
 type LogController struct {
 	db           *gorm.DB
 	logProcessor *services.LogProcessor
@@ -224,7 +226,7 @@ func (lc *LogController) GetLogFiles(c *gin.Context) {
 		logFilesWithReview = append(logFilesWithReview, logFileMap)
 	}
 
-	logEntry.Info("Log files retrieved successfully", map[string]interface{}{
+	logEntry.Debug("Log files retrieved successfully", map[string]interface{}{
 		"count": len(logFiles),
 		"total": total,
 		"page":  page,
@@ -751,6 +753,8 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 			"updatedAt":   job.UpdatedAt,
 			"totalChunks": job.TotalChunks,
 			"failedChunk": job.FailedChunk,
+			"startedAt":   job.StartedAt,
+			"completedAt": job.CompletedAt,
 		}
 
 		// If job is completed, extract analysis results
@@ -937,6 +941,15 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 		}
 
 		// 7. Delete the log file itself
+		if ENABLE_LOG_FILE_FLUSH {
+			// Remove the file from disk if enabled
+			logFilePath := filepath.Join(lc.uploadDir, logFile.Filename)
+			if err := os.Remove(logFilePath); err != nil && !os.IsNotExist(err) {
+				logEntry.Warn("Failed to delete log file from disk", map[string]interface{}{"log_file_id": logFileID, "file_path": logFilePath, "error": err.Error()})
+			} else {
+				logEntry.Info("Deleted log file from disk", map[string]interface{}{"log_file_id": logFileID, "file_path": logFilePath})
+			}
+		}
 		if err := tx.Unscoped().Delete(&logFile).Error; err != nil {
 			tx.Rollback()
 			logger.WithError(err, "log_controller").Error("Failed to delete log file")

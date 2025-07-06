@@ -524,10 +524,10 @@ const Logs = () => {
         setReviewSubmitting(false);
         return;
       }
-      console.log('Submitting review to:', `/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`);
+      console.log('Submitting review to:', `/analyses/${completedJob.analysisMemoryId}/feedback`);
       console.log('Review data:', { isCorrect: reviewIsCorrect, correction: reviewCorrection });
       
-      await api.post(`/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`, {
+      await api.post(`/analyses/${completedJob.analysisMemoryId}/feedback`, {
         isCorrect: reviewIsCorrect,
         correction: reviewCorrection,
       });
@@ -754,10 +754,17 @@ const Logs = () => {
                   </div>
                   <div className="flex space-x-2">
                     <button
-                      onClick={() => handleViewLogFile(logFile)}
-                      className="bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700"
+                      onClick={() => {
+                        if (selectedLogFile && selectedLogFile.id === logFile.id) {
+                          setSelectedLogFile(null);
+                          setLogEntries([]);
+                        } else {
+                          handleViewLogFile(logFile);
+                        }
+                      }}
+                      className={`bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700`}
                     >
-                      View
+                      {selectedLogFile && selectedLogFile.id === logFile.id ? 'Close Details' : 'View Details'}
                     </button>
                     {/* RCA buttons only if RCA is possible */}
                     {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
@@ -835,6 +842,7 @@ const Logs = () => {
             <RCAnalysis 
               logFileId={selectedLogFile.id} 
               initialStatus={selectedLogFile.rcaAnalysisStatus || 'idle'}
+              hasReview={selectedLogFile?.hasReview}
               onAnalysisComplete={(results) => {
                 setMessage('RCA analysis completed successfully!');
                 fetchLogFiles();
@@ -863,6 +871,7 @@ const Logs = () => {
               Show all entries
             </label>
           </div>
+          {console.log("logEntries", logEntries, "showAllEntries", showAllEntries, "selectedLogFile", selectedLogFile)}
           <div className="max-h-96 overflow-y-auto">
             {(showAllEntries ? logEntries : getErrorEntries(logEntries)).map((entry) => (
               <div key={entry.id} className="border-b border-gray-100 py-2">
