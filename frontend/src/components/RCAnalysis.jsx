@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
-import { ENABLE_POLLING } from '../constants';
 
 const POLL_INTERVAL = 2000;
 
@@ -24,6 +23,10 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [useChunking, setUseChunking] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [logFileDetails, setLogFileDetails] = useState(null);
+  const [pollingEnabled, setPollingEnabled] = useState(false);
+  const POLLING_MODES = ['Off', 'RCA Only', 'Processing Only', 'Both'];
+  const [pollingMode, setPollingMode] = useState('Off');
+  const [showResults, setShowResults] = useState(false);
 
   // Helper to poll job status
   const pollJobStatus = (jobId) => {
@@ -48,7 +51,15 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     });
   };
 
-  // On mount, always check for active RCA job and start polling if found
+  // Helper to determine if polling should be active
+  const shouldPoll = () => {
+    if (pollingMode === 'Both') return status === 'pending' || status === 'running' || status === 'processing';
+    if (pollingMode === 'RCA Only') return status === 'pending' || status === 'running';
+    if (pollingMode === 'Processing Only') return status === 'processing';
+    return false;
+  };
+
+  // On mount or when logFileId changes, check for active RCA job (but do not set up polling here)
   useEffect(() => {
     let cancelled = false;
     api.get(`/logs/${logFileId}/analyses`).then(res => {
@@ -59,9 +70,6 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         setJobId(activeJob.id);
         setProgress(activeJob.progress || 0);
         setStatus(activeJob.status);
-        if (ENABLE_POLLING) {
-          pollingRef.current = setInterval(() => pollJobStatus(activeJob.id), POLL_INTERVAL);
-        }
       }
     });
     return () => {
@@ -70,12 +78,24 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     };
   }, [logFileId]);
 
+  // Polling effect: only set up polling interval if shouldPoll() is true
+  useEffect(() => {
+    if (shouldPoll() && jobId) {
+      pollingRef.current = setInterval(() => pollJobStatus(jobId), POLL_INTERVAL);
+    } else if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+    }
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [pollingMode, jobId, status]);
+
   // Fetch all RCA jobs for this log file
   const fetchJobs = async () => {
     setLoadingJobs(true);
     try {
-      const response = await api.get(`/logs/${logFileId}/jobs`);
-      setJobs(response.data.jobs || []);
+      const response = await api.get(`/logs/${logFileId}/analyses`);
+      setJobs(response.data.analyses || []);
     } catch (err) {
       setJobs([]);
     }
@@ -109,7 +129,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       const response = await api.post(`/logs/${logFileId}/analyze`);
       setJobId(response.data.jobId);
       setStatus('pending');
-      if (ENABLE_POLLING) {
+      if (shouldPoll()) {
         pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
       }
     } catch (err) {
@@ -180,7 +200,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       
       setJobId(response.data.jobId);
       setStatus('pending');
-      if (ENABLE_POLLING) {
+      if (shouldPoll()) {
         pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
       }
       
@@ -284,207 +304,265 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     );
   };
 
+  // Placeholder icons (replace with actual icon components or imports as needed)
+  const PlayIcon = () => <span className="inline-block align-middle">▶️</span>;
+  const CheckIcon = () => <span className="inline-block align-middle">✔️</span>;
+  const ChevronIcon = ({ open }) => (
+    <span className={`inline-block transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+  );
+  const InfoIcon = ({ tooltip }) => (
+    <span className="ml-1 text-blue-400 cursor-pointer" title={tooltip}>ℹ️</span>
+  );
+
+  // Spinner icon placeholder
+  const SpinnerIcon = () => <span className="inline-block animate-spin mr-2">⏳</span>;
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Root Cause Analysis</h3>
-        <div className="flex items-center space-x-2">
-          <span className={`text-sm font-medium ${getStatusColor()}`}>{getStatusText()}</span>
-          {status === 'running' && (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-          )}
-          {status === 'pending' && (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500"></div>
-          )}
+    <div className="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-lg font-semibold text-gray-900">Root Cause Analysis</h2>
+        <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs font-semibold text-gray-700 border border-gray-200">{getStatusText()}</span>
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1">
+          Polling Mode
+          <InfoIcon tooltip="Choose when the app should auto-refresh status." />
+        </label>
+        <div className="flex bg-gray-100 rounded-lg overflow-hidden">
+          {POLLING_MODES.map(mode => (
+            <button
+              key={mode}
+              className={`px-3 py-1 text-xs font-medium transition ${
+                pollingMode === mode
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-700 hover:bg-blue-100'
+              }`}
+              onClick={() => setPollingMode(mode)}
+              type="button"
+            >
+              {mode}
+              {pollingMode === mode && <CheckIcon />}
+            </button>
+          ))}
         </div>
       </div>
-
-      {/* Progress bar if running/pending */}
+      {/* Advanced Settings Accordion */}
+      <div className="mt-2">
+        <button
+          type="button"
+          className="flex items-center gap-2 text-blue-700 font-medium focus:outline-none"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          <ChevronIcon open={showAdvanced} />
+          {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
+        </button>
+        {showAdvanced && (
+          <div className="mt-2 p-4 bg-gray-50 border border-gray-200 rounded-md space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">LLM Timeout (seconds)</label>
+              <input
+                type="number"
+                min={30}
+                max={1800}
+                value={llmTimeout}
+                onChange={e => setLlmTimeout(Number(e.target.value))}
+                className="w-24 px-2 py-1 border rounded text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Chunking</label>
+              <div className="flex items-center space-x-4">
+                <label className="inline-flex items-center">
+                  <input
+                    type="radio"
+                    checked={useChunking}
+                    onChange={() => setUseChunking(true)}
+                    className="form-radio"
+                  />
+                  <span className="ml-1 text-sm">Yes</span>
+                </label>
+                <label className="inline-flex items-center">
+                  <input
+                    type="radio"
+                    checked={!useChunking}
+                    onChange={() => setUseChunking(false)}
+                    className="form-radio"
+                  />
+                  <span className="ml-1 text-sm">No</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      {/* Progress percentage and bar if running/pending */}
       {(status === 'pending' || status === 'running') && (
-        <div className="w-full bg-blue-200 rounded-full h-2 mb-2">
-          <div 
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${progress}%` }}
-          ></div>
-        </div>
+        <>
+          <div className="flex justify-end text-xs text-gray-500 font-medium mb-1">
+            Progress: {progress}%
+          </div>
+          <div className="w-full bg-blue-200 rounded-full h-2 mb-2">
+            <div 
+              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+        </>
       )}
-
       {/* Error message */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-3">
+        <div className="bg-red-50 border border-red-200 rounded-md p-3 mt-2">
           <p className="text-red-800 text-sm">{error}</p>
         </div>
       )}
-
-      {/* Advanced settings dropdown */}
-      <AdvancedSettings />
-
-      {/* Main RCA action button */}
-      <div>{renderMainButton()}</div>
-
-      {/* Show chunk info if available */}
-      {totalChunks && (
-        <div className="text-xs text-gray-500">Total Chunks: {totalChunks}</div>
-      )}
-      {failedChunk && status === 'failed' && (
-        <div className="text-xs text-red-600">Failed at chunk: {failedChunk}</div>
-      )}
-
-      {/* Retry button if failed and failedChunk is set */}
-      {status === 'failed' && failedChunk && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-          <p className="text-yellow-800 text-sm mb-3">
-            RCA analysis failed at chunk {failedChunk}. You can retry the analysis.
-          </p>
-          <button
-            onClick={startAnalysis}
-            className="btn btn-primary"
-          >
-            Retry RCA Analysis
-          </button>
-        </div>
-      )}
-
-      {/* RCA Results Section (as before) */}
+      {/* RCA Results Section (collapsible as before) */}
       {status === 'completed' && results && (
-        <div className="bg-green-50 border border-green-200 rounded-md p-4 mt-4">
-          <p className="text-green-800 text-sm mb-3">
-            {(() => {
-              const analysis = results.analysis?.final || results.analysis || results;
-              const isNoErrorsAnalysis = analysis.severity === 'low' && 
-                analysis.criticalErrors === 0 && 
-                analysis.nonCriticalErrors === 0 && 
-                (!analysis.errorAnalysis || analysis.errorAnalysis.length === 0) &&
-                (analysis.summary?.toLowerCase().includes('no error') || 
-                 analysis.rootCause?.toLowerCase().includes('no error'));
-              return isNoErrorsAnalysis 
-                ? "RCA Analysis completed successfully! ✅ No errors detected - your system is healthy."
-                : "RCA Analysis completed successfully! Issues have been identified and analyzed.";
-            })()}
-          </p>
-        </div>
-      )}
+        <>
+          <button
+            className="w-full flex items-center justify-center gap-2 btn btn-secondary mb-2"
+            onClick={() => setShowResults(v => !v)}
+          >
+            {showResults ? 'Hide Results' : 'View Results'}
+          </button>
+          <div
+            className={`transition-all duration-300 overflow-hidden ${showResults ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
+          >
+            <div className="bg-green-50 border border-green-200 rounded-md p-4 mt-2">
+              <p className="text-green-800 text-sm mb-3">
+                {(() => {
+                  const analysis = results.analysis?.final || results.analysis || results;
+                  const isNoErrorsAnalysis = analysis.severity === 'low' && 
+                    analysis.criticalErrors === 0 && 
+                    analysis.nonCriticalErrors === 0 && 
+                    (!analysis.errorAnalysis || analysis.errorAnalysis.length === 0) &&
+                    (analysis.summary?.toLowerCase().includes('no error') || 
+                      analysis.rootCause?.toLowerCase().includes('no error'));
+                  return isNoErrorsAnalysis 
+                    ? "RCA Analysis completed successfully! ✅ No errors detected - your system is healthy."
+                    : "RCA Analysis completed successfully! Issues have been identified and analyzed.";
+                })()}
+              </p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-md p-4 mt-2">
+              <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
+              <div className="space-y-3">
+                {(() => {
+                  // Use analysis.final if present, else analysis
+                  const analysis = results.analysis?.final || results.analysis || results;
+                  
+                  // Check if this is a "no errors found" analysis
+                  const isNoErrorsAnalysis = analysis.severity === 'low' && 
+                    analysis.criticalErrors === 0 && 
+                    analysis.nonCriticalErrors === 0 && 
+                    (!analysis.errorAnalysis || analysis.errorAnalysis.length === 0) &&
+                    (analysis.summary?.toLowerCase().includes('no error') || 
+                      analysis.rootCause?.toLowerCase().includes('no error'));
 
-      {/* (Keep the rest of the results/feedback UI as before) */}
-      {results && (
-        <div className="bg-white border border-gray-200 rounded-md p-4 mt-2">
-          <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
-          <div className="space-y-3">
-            {(() => {
-              // Use analysis.final if present, else analysis
-              const analysis = results.analysis?.final || results.analysis || results;
-              
-              // Check if this is a "no errors found" analysis
-              const isNoErrorsAnalysis = analysis.severity === 'low' && 
-                analysis.criticalErrors === 0 && 
-                analysis.nonCriticalErrors === 0 && 
-                (!analysis.errorAnalysis || analysis.errorAnalysis.length === 0) &&
-                (analysis.summary?.toLowerCase().includes('no error') || 
-                 analysis.rootCause?.toLowerCase().includes('no error'));
+                  if (isNoErrorsAnalysis) {
+                    return (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="flex items-center mb-3">
+                          <div className="flex-shrink-0">
+                            <svg className="h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <div className="ml-3">
+                            <h5 className="text-lg font-medium text-green-800">No Errors Detected</h5>
+                            <p className="text-sm text-green-700">Your log file contains no ERROR or FATAL entries</p>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-white rounded-md p-3 border border-green-200">
+                          <div className="mb-3">
+                            <h6 className="text-sm font-medium text-gray-700 mb-1">Summary</h6>
+                            <p className="text-sm text-gray-600">{analysis.summary}</p>
+                          </div>
+                          
+                          <div className="mb-3">
+                            <h6 className="text-sm font-medium text-gray-700 mb-1">Status</h6>
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              ✅ System Healthy - No RCA Needed
+                            </span>
+                          </div>
+                          
+                          {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
+                            <div>
+                              <h6 className="text-sm font-medium text-gray-700 mb-1">Recommendations</h6>
+                              <ul className="text-sm text-gray-600 list-disc list-inside">
+                                {analysis.recommendations.map((rec, index) => (
+                                  <li key={index}>{rec}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                          <p className="text-sm text-blue-800">
+                            <strong>Note:</strong> Since no errors were detected, no Root Cause Analysis is needed. 
+                            Your system appears to be functioning normally. Continue monitoring for any new issues.
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
 
-              if (isNoErrorsAnalysis) {
-                return (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-center mb-3">
-                      <div className="flex-shrink-0">
-                        <svg className="h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                  // Standard error analysis display
+                  return (
+                    <>
+                      <div>
+                        <h5 className="text-sm font-medium text-gray-700">Summary</h5>
+                        <p className="text-sm text-gray-600 mt-1">{analysis.summary}</p>
                       </div>
-                      <div className="ml-3">
-                        <h5 className="text-lg font-medium text-green-800">No Errors Detected</h5>
-                        <p className="text-sm text-green-700">Your log file contains no ERROR or FATAL entries</p>
+                      <div>
+                        <h5 className="text-sm font-medium text-gray-700">Root Cause</h5>
+                        <p className="text-sm text-gray-600 mt-1">{analysis.rootCause}</p>
                       </div>
-                    </div>
-                    
-                    <div className="bg-white rounded-md p-3 border border-green-200">
-                      <div className="mb-3">
-                        <h6 className="text-sm font-medium text-gray-700 mb-1">Summary</h6>
-                        <p className="text-sm text-gray-600">{analysis.summary}</p>
-                      </div>
-                      
-                      <div className="mb-3">
-                        <h6 className="text-sm font-medium text-gray-700 mb-1">Status</h6>
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          ✅ System Healthy - No RCA Needed
+                      <div>
+                        <h5 className="text-sm font-medium text-gray-700">Severity</h5>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                          analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
+                          analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {analysis.severity}
                         </span>
                       </div>
-                      
                       {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
                         <div>
-                          <h6 className="text-sm font-medium text-gray-700 mb-1">Recommendations</h6>
-                          <ul className="text-sm text-gray-600 list-disc list-inside">
+                          <h5 className="text-sm font-medium text-gray-700">Recommendations</h5>
+                          <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
                             {analysis.recommendations.map((rec, index) => (
                               <li key={index}>{rec}</li>
                             ))}
                           </ul>
                         </div>
                       )}
-                    </div>
-                    
-                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                      <p className="text-sm text-blue-800">
-                        <strong>Note:</strong> Since no errors were detected, no Root Cause Analysis is needed. 
-                        Your system appears to be functioning normally. Continue monitoring for any new issues.
-                      </p>
-                    </div>
-                  </div>
-                );
-              }
-
-              // Standard error analysis display
-              return (
-                <>
-                  <div>
-                    <h5 className="text-sm font-medium text-gray-700">Summary</h5>
-                    <p className="text-sm text-gray-600 mt-1">{analysis.summary}</p>
-                  </div>
-                  <div>
-                    <h5 className="text-sm font-medium text-gray-700">Root Cause</h5>
-                    <p className="text-sm text-gray-600 mt-1">{analysis.rootCause}</p>
-                  </div>
-                  <div>
-                    <h5 className="text-sm font-medium text-gray-700">Severity</h5>
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
-                      analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
-                      analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-green-100 text-green-800'
-                    }`}>
-                      {analysis.severity}
-                    </span>
-                  </div>
-                  {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
-                    <div>
-                      <h5 className="text-sm font-medium text-gray-700">Recommendations</h5>
-                      <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
-                        {analysis.recommendations.map((rec, index) => (
-                          <li key={index}>{rec}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {/* Advanced: Raw LLM response */}
-                  {results.analysis?.rawLLMResponse && (
-                    <div className="mt-4">
-                      <button
-                        className="text-xs text-blue-600 underline"
-                        onClick={() => setShowAdvanced(v => !v)}
-                      >
-                        {showAdvanced ? 'Hide' : 'Show'} Advanced (Raw LLM Response)
-                      </button>
-                      {showAdvanced && (
-                        <pre className="mt-2 p-2 bg-gray-100 text-xs rounded overflow-x-auto max-h-64">
-                          {results.analysis.rawLLMResponse}
-                        </pre>
+                      {/* Advanced: Raw LLM response */}
+                      {results.analysis?.rawLLMResponse && (
+                        <div className="mt-4">
+                          <button
+                            className="text-xs text-blue-600 underline"
+                            onClick={() => setShowAdvanced(v => !v)}
+                          >
+                            {showAdvanced ? 'Hide' : 'Show'} Advanced (Raw LLM Response)
+                          </button>
+                          {showAdvanced && (
+                            <pre className="mt-2 p-2 bg-gray-100 text-xs rounded overflow-x-auto max-h-64">
+                              {results.analysis.rawLLMResponse}
+                            </pre>
+                          )}
+                        </div>
                       )}
-                    </div>
-                  )}
-                </>
-              );
-            })()}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {status === 'completed' && results && (
@@ -533,54 +611,79 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         </div>
       )}
 
+      {/* Table rendering (replace the old table section) */}
       <div className="mt-8">
-        <h3 className="font-semibold mb-2">Start New RCA Analysis</h3>
-        {loadingJobs ? (
-          <div>Loading past runs...</div>
-        ) : jobs.length === 0 ? (
-          <div>No past RCA runs found.</div>
-        ) : (
-          <table className="w-full border text-sm">
-            <thead>
-              <tr>
-                <th className="border px-2 py-1">Run #</th>
-                <th className="border px-2 py-1">Status</th>
-                <th className="border px-2 py-1">Progress</th>
-                <th className="border px-2 py-1">Error</th>
-                <th className="border px-2 py-1">Started</th>
-                <th className="border px-2 py-1">Completed</th>
-                <th className="border px-2 py-1">Chunks</th>
-                <th className="border px-2 py-1">Failed Chunk</th>
-                <th className="border px-2 py-1">Retry</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job, idx) => (
-                <tr key={job.id} className="border">
-                  <td className="border px-2 py-1">{jobs.length - idx}</td>
-                  <td className="border px-2 py-1">{job.status}</td>
-                  <td className="border px-2 py-1">{job.progress}%</td>
-                  <td className="border px-2 py-1 text-red-700">{job.error || '-'}</td>
-                  <td className="border px-2 py-1">{job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}</td>
-                  <td className="border px-2 py-1">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '-'}</td>
-                  <td className="border px-2 py-1">{job.totalChunks || '-'}</td>
-                  <td className="border px-2 py-1">{job.failedChunk || '-'}</td>
-                  <td className="border px-2 py-1">
-                    {job.status === 'failed' && (
-                      <button
-                        className="bg-yellow-500 text-white px-2 py-1 rounded"
-                        onClick={handleNewRun}
-                        disabled={isSubmitting}
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </td>
+        <h3 className="font-semibold mb-2">Past RCA Runs</h3>
+        <div className="bg-white shadow rounded-lg overflow-x-auto">
+          {loadingJobs ? (
+            <div className="p-4">Loading past runs...</div>
+          ) : jobs.length === 0 ? (
+            <div className="p-4 text-gray-500">No past RCA runs found.</div>
+          ) : (
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="px-3 py-2 text-left">Run #</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-right">Progress</th>
+                  <th className="px-3 py-2 text-left">Error</th>
+                  <th className="px-3 py-2 text-left">Started</th>
+                  <th className="px-3 py-2 text-left">Completed</th>
+                  <th className="px-3 py-2 text-right">Chunks</th>
+                  <th className="px-3 py-2 text-right">Failed Chunk</th>
+                  <th className="px-3 py-2 text-center">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {jobs.map((job, idx) => (
+                  <tr key={job.id} className={idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'}>
+                    <td className="px-3 py-2">{jobs.length - idx}</td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${
+                        job.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        job.status === 'failed' ? 'bg-red-100 text-red-800' :
+                        job.status === 'running' ? 'bg-blue-100 text-blue-800' :
+                        job.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {job.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">{job.progress}%</td>
+                    <td className="px-3 py-2 text-red-700">{job.error || '-'}</td>
+                    <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}</td>
+                    <td className="px-3 py-2">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '-'}</td>
+                    <td className="px-3 py-2 text-right">{job.totalChunks || '-'}</td>
+                    <td className="px-3 py-2 text-right">{job.failedChunk || '-'}</td>
+                    <td className="px-3 py-2 text-center space-x-1">
+                      <button
+                        className="inline-block px-2 py-1 rounded bg-blue-500 text-white text-xs font-medium disabled:opacity-50"
+                        disabled={job.status !== 'completed'}
+                        title="View Results"
+                        onClick={() => {
+                          setResults(job.result);
+                          setShowResults(true);
+                        }}
+                      >
+                        View
+                      </button>
+                      {job.status === 'failed' && (
+                        <button
+                          className="inline-block px-2 py-1 rounded bg-yellow-500 text-white text-xs font-medium"
+                          onClick={handleNewRun}
+                          disabled={isSubmitting}
+                          title="Retry RCA"
+                        >
+                          Retry
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </div>
   );

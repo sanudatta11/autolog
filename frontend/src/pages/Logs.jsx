@@ -7,7 +7,6 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
   LOGS_POLL_INTERVAL_MS,
-  ENABLE_POLLING,
   UPLOAD_PROGRESS_BAR_HEIGHT,
   PDF_SUMMARY_WRAP_WIDTH,
   PDF_ROOT_CAUSE_WRAP_WIDTH,
@@ -38,7 +37,7 @@ const Logs = () => {
   // After logFiles are updated, check if polling should be running
   useEffect(() => {
     let interval = null;
-    const shouldPoll = ENABLE_POLLING && logFiles.some(
+    const shouldPoll = logFiles.some(
       (log) =>
         log.status === 'processing' ||
         log.rcaAnalysisStatus === 'pending' ||
@@ -63,8 +62,13 @@ const Logs = () => {
   const fetchUserRole = async () => {
     try {
       const response = await api.get('/users/me');
-      setUserRole(response.data.user.role);
+      if (response.data && response.data.user && response.data.user.role) {
+        setUserRole(response.data.user.role);
+      } else {
+        setUserRole('');
+      }
     } catch (error) {
+      setUserRole('');
       console.error('Failed to fetch user role:', error);
     }
   };
@@ -484,15 +488,6 @@ const Logs = () => {
     <div className="container mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Log Analysis & RCA</h1>
-        <div className="flex items-center space-x-2">
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-            ENABLE_POLLING 
-              ? 'bg-green-100 text-green-800' 
-              : 'bg-gray-100 text-gray-800'
-          }`}>
-            {ENABLE_POLLING ? '🔄 Polling Enabled' : '⏸️ Polling Disabled'}
-          </span>
-        </div>
       </div>
 
       {/* Log Sources Section */}
