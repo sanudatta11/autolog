@@ -137,6 +137,46 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 		return
 	}
 
+	// Add detailed logging to understand the job and LogFile relationship
+	logger.Info("Job loaded successfully", map[string]interface{}{
+		"jobID":       jobID,
+		"logFileID":   job.LogFileID,
+		"jobType":     job.Type,
+		"jobStatus":   job.Status,
+		"logFile_nil": job.LogFile == nil,
+	})
+
+	if job.LogFile != nil {
+		logger.Info("LogFile relationship loaded successfully", map[string]interface{}{
+			"jobID":      jobID,
+			"logFileID":  job.LogFile.ID,
+			"filename":   job.LogFile.Filename,
+			"status":     job.LogFile.Status,
+			"entryCount": job.LogFile.EntryCount,
+		})
+	} else {
+		logger.Error("LogFile relationship is nil", map[string]interface{}{
+			"jobID":     jobID,
+			"logFileID": job.LogFileID,
+		})
+		// Try to load LogFile manually to see if it exists
+		var logFile models.LogFile
+		if err := js.db.First(&logFile, job.LogFileID).Error; err != nil {
+			logger.Error("Failed to load LogFile manually", map[string]interface{}{
+				"jobID":     jobID,
+				"logFileID": job.LogFileID,
+				"error":     err,
+			})
+		} else {
+			logger.Info("LogFile exists but relationship failed", map[string]interface{}{
+				"jobID":     jobID,
+				"logFileID": logFile.ID,
+				"filename":  logFile.Filename,
+				"status":    logFile.Status,
+			})
+		}
+	}
+
 	// Check if RCA is possible for this log file
 	if job.LogFile != nil && !job.LogFile.IsRCAPossible {
 		logger.Info("RCA not possible for this log file, completing job with no RCA needed", map[string]interface{}{"jobID": jobID, "logFileID": job.LogFileID, "reason": job.LogFile.RCANotPossibleReason})
@@ -258,8 +298,34 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 	}
 
 	// --- Save LogAnalysis and LogAnalysisMemory ---
-	if aggregated != nil && job.LogFile != nil {
-		// Save LogAnalysis
+	logger.Info("[RCA] Checking conditions for LogAnalysis and LogAnalysisMemory creation", map[string]interface{}{
+		"jobID":          jobID,
+		"aggregated_nil": aggregated == nil,
+		"jobLogFile_nil": job.LogFile == nil,
+		"logFileID":      job.LogFileID,
+	})
+	if aggregated == nil {
+		logger.Error("[RCA] Aggregated result is nil, will not create LogAnalysis or LogAnalysisMemory", map[string]interface{}{"jobID": jobID})
+	} else {
+		// Log the full aggregated object for debugging
+		aggJson, _ := json.Marshal(aggregated)
+		logger.Info("[RCA] Aggregated result details", map[string]interface{}{"jobID": jobID, "aggregated": string(aggJson)})
+		if aggregated.Summary == "" {
+			logger.Error("[RCA] Aggregated result missing summary", map[string]interface{}{"jobID": jobID, "aggregated": string(aggJson)})
+		}
+		if aggregated.RootCause == "" {
+			logger.Error("[RCA] Aggregated result missing rootCause", map[string]interface{}{"jobID": jobID, "aggregated": string(aggJson)})
+		}
+	}
+	if job.LogFile == nil {
+		logger.Error("[RCA] job.LogFile is nil, will not create LogAnalysis or LogAnalysisMemory", map[string]interface{}{"jobID": jobID, "logFileID": job.LogFileID})
+	} else {
+		// Log the full job.LogFile object for debugging
+		logFileJson, _ := json.Marshal(job.LogFile)
+		logger.Info("[RCA] job.LogFile details", map[string]interface{}{"jobID": jobID, "logFile": string(logFileJson)})
+	}
+	if aggregated != nil && job.LogFile != nil && aggregated.Summary != "" && aggregated.RootCause != "" {
+		logger.Info("[RCA] Creating LogAnalysis record", map[string]interface{}{"jobID": jobID})
 		analysis := &models.LogAnalysis{
 			LogFileID:    job.LogFile.ID,
 			Summary:      aggregated.Summary,
@@ -276,7 +342,9 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 			},
 		}
 		if err := js.db.Create(analysis).Error; err != nil {
-			logger.Error("Failed to save LogAnalysis after RCA", map[string]interface{}{"jobID": jobID, "error": err})
+			logger.Error("[RCA] Failed to save LogAnalysis after RCA", map[string]interface{}{"jobID": jobID, "error": err, "analysis": analysis})
+		} else {
+			logger.Info("[RCA] Successfully created LogAnalysis", map[string]interface{}{"jobID": jobID, "analysisID": analysis.ID})
 		}
 
 		// Save LogAnalysisMemory (with embedding)
@@ -285,11 +353,12 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 			prompt := aggregated.Summary + "\n" + aggregated.RootCause
 			embed, err := js.llmService.GenerateEmbedding(prompt)
 			if err != nil {
-				logger.Warn("Failed to generate embedding for LogAnalysisMemory", map[string]interface{}{"jobID": jobID, "error": err})
+				logger.Warn("[RCA] Failed to generate embedding for LogAnalysisMemory", map[string]interface{}{"jobID": jobID, "error": err})
 			} else if embed != nil {
 				embedding = models.JSONB{"embedding": embed}
 			}
 		}
+		logger.Info("[RCA] Creating LogAnalysisMemory record", map[string]interface{}{"jobID": jobID})
 		memory := &models.LogAnalysisMemory{
 			LogFileID: &job.LogFile.ID,
 			Summary:   aggregated.Summary,
@@ -303,19 +372,29 @@ func (js *JobService) ProcessRCAAnalysisJob(jobID uint) {
 			CreatedAt: time.Now(),
 		}
 		if err := js.db.Create(memory).Error; err != nil {
-			logger.Error("Failed to save LogAnalysisMemory after RCA", map[string]interface{}{"jobID": jobID, "error": err})
+			logger.Error("[RCA] Failed to save LogAnalysisMemory after RCA", map[string]interface{}{"jobID": jobID, "error": err, "memory": memory})
+		} else {
+			logger.Info("[RCA] Successfully created LogAnalysisMemory", map[string]interface{}{"jobID": jobID, "memoryID": memory.ID})
 		}
+	} else {
+		logger.Warn("[RCA] Skipping LogAnalysis and LogAnalysisMemory creation due to missing or incomplete data", map[string]interface{}{
+			"jobID":             jobID,
+			"aggregated_nil":    aggregated == nil,
+			"jobLogFile_nil":    job.LogFile == nil,
+			"missing_summary":   aggregated != nil && aggregated.Summary == "",
+			"missing_rootCause": aggregated != nil && aggregated.RootCause == "",
+		})
+	}
 
-		// Learn from the completed analysis
-		if js.learningService != nil {
-			if err := js.learningService.LearnFromAnalysis(job.LogFile, aggregated); err != nil {
-				logger.Error("Failed to learn from RCA analysis", map[string]interface{}{"jobID": jobID, "error": err})
-			} else {
-				logger.Info("Successfully learned from RCA analysis", map[string]interface{}{
-					"jobID":     jobID,
-					"logFileID": job.LogFile.ID,
-				})
-			}
+	// Learn from the completed analysis
+	if js.learningService != nil {
+		if err := js.learningService.LearnFromAnalysis(job.LogFile, aggregated); err != nil {
+			logger.Error("Failed to learn from RCA analysis", map[string]interface{}{"jobID": jobID, "error": err})
+		} else {
+			logger.Info("Successfully learned from RCA analysis", map[string]interface{}{
+				"jobID":     jobID,
+				"logFileID": job.LogFile.ID,
+			})
 		}
 	}
 
@@ -409,6 +488,27 @@ func (js *JobService) ProcessRCAAnalysisJobWithOptions(jobID uint, timeout int, 
 		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
 		return
 	}
+
+	// Add logging to understand the aggregated result
+	logger.Info("RCA aggregation completed", map[string]interface{}{
+		"jobID":          jobID,
+		"aggregated_nil": aggregated == nil,
+		"partials_count": len(partials),
+	})
+
+	if aggregated != nil {
+		logger.Info("Aggregated result details", map[string]interface{}{
+			"jobID":     jobID,
+			"summary":   aggregated.Summary,
+			"rootCause": aggregated.RootCause,
+			"severity":  aggregated.Severity,
+		})
+	} else {
+		logger.Error("Aggregated result is nil", map[string]interface{}{
+			"jobID":          jobID,
+			"partials_count": len(partials),
+		})
+	}
 	finalResult := map[string]interface{}{
 		"partials": partials,
 		"final":    aggregated,
@@ -426,6 +526,88 @@ func (js *JobService) ProcessRCAAnalysisJobWithOptions(jobID uint, timeout int, 
 	if err := js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "completed").Error; err != nil {
 		logger.Error("Failed to update log file status", map[string]interface{}{"jobID": job.LogFileID, "error": err})
 	}
+
+	// --- Save LogAnalysis and LogAnalysisMemory ---
+	logger.Info("Checking conditions for LogAnalysis and LogAnalysisMemory creation (WithOptions)", map[string]interface{}{
+		"jobID":          jobID,
+		"aggregated_nil": aggregated == nil,
+		"jobLogFile_nil": job.LogFile == nil,
+		"logFileID":      job.LogFileID,
+	})
+	if aggregated == nil {
+		logger.Error("Aggregated result is nil (WithOptions), will not create LogAnalysis or LogAnalysisMemory", map[string]interface{}{"jobID": jobID})
+	}
+	if job.LogFile == nil {
+		logger.Error("job.LogFile is nil (WithOptions), will not create LogAnalysis or LogAnalysisMemory", map[string]interface{}{"jobID": jobID})
+	}
+	if aggregated != nil && job.LogFile != nil {
+		logger.Info("Creating LogAnalysis record (WithOptions)", map[string]interface{}{"jobID": jobID})
+		analysis := &models.LogAnalysis{
+			LogFileID:    job.LogFile.ID,
+			Summary:      aggregated.Summary,
+			Severity:     aggregated.Severity,
+			ErrorCount:   aggregated.CriticalErrors + aggregated.NonCriticalErrors,
+			WarningCount: job.LogFile.WarningCount,
+			Metadata: map[string]interface{}{
+				"rootCause":         aggregated.RootCause,
+				"recommendations":   aggregated.Recommendations,
+				"errorAnalysis":     aggregated.ErrorAnalysis,
+				"criticalErrors":    aggregated.CriticalErrors,
+				"nonCriticalErrors": aggregated.NonCriticalErrors,
+				"aiGenerated":       true,
+			},
+		}
+		if err := js.db.Create(analysis).Error; err != nil {
+			logger.Error("Failed to save LogAnalysis after RCA (WithOptions)", map[string]interface{}{"jobID": jobID, "error": err})
+		} else {
+			logger.Info("Successfully created LogAnalysis (WithOptions)", map[string]interface{}{"jobID": jobID, "analysisID": analysis.ID})
+		}
+
+		// Save LogAnalysisMemory (with embedding)
+		var embedding models.JSONB = nil
+		if js.llmService != nil {
+			prompt := aggregated.Summary + "\n" + aggregated.RootCause
+			embed, err := js.llmService.GenerateEmbedding(prompt)
+			if err != nil {
+				logger.Warn("Failed to generate embedding for LogAnalysisMemory (WithOptions)", map[string]interface{}{"jobID": jobID, "error": err})
+			} else if embed != nil {
+				embedding = models.JSONB{"embedding": embed}
+			}
+		}
+		logger.Info("Creating LogAnalysisMemory record (WithOptions)", map[string]interface{}{"jobID": jobID})
+		memory := &models.LogAnalysisMemory{
+			LogFileID: &job.LogFile.ID,
+			Summary:   aggregated.Summary,
+			RootCause: aggregated.RootCause,
+			Embedding: embedding,
+			Metadata: map[string]interface{}{
+				"severity":        aggregated.Severity,
+				"recommendations": aggregated.Recommendations,
+				"errorAnalysis":   aggregated.ErrorAnalysis,
+			},
+			CreatedAt: time.Now(),
+		}
+		if err := js.db.Create(memory).Error; err != nil {
+			logger.Error("Failed to save LogAnalysisMemory after RCA (WithOptions)", map[string]interface{}{"jobID": jobID, "error": err})
+		} else {
+			logger.Info("Successfully created LogAnalysisMemory (WithOptions)", map[string]interface{}{"jobID": jobID, "memoryID": memory.ID})
+		}
+
+		// Learn from the completed analysis
+		if js.learningService != nil {
+			if err := js.learningService.LearnFromAnalysis(job.LogFile, aggregated); err != nil {
+				logger.Error("Failed to learn from RCA analysis (WithOptions)", map[string]interface{}{"jobID": jobID, "error": err})
+			} else {
+				logger.Info("Successfully learned from RCA analysis (WithOptions)", map[string]interface{}{
+					"jobID":     jobID,
+					"logFileID": job.LogFile.ID,
+				})
+			}
+		}
+	} else {
+		logger.Warn("Skipping LogAnalysis and LogAnalysisMemory creation due to missing data (WithOptions)", map[string]interface{}{"jobID": jobID})
+	}
+
 	logger.Info("RCA analysis completed for job", map[string]interface{}{"jobID": jobID})
 }
 

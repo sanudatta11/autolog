@@ -13,9 +13,11 @@ import {
   PDF_RECOMMENDATION_WRAP_WIDTH,
   PDF_TABLE_COLUMN_WIDTHS
 } from '../constants';
+import { PollingContext } from '../components/Layout';
 
 const Logs = () => {
   const { token } = useAuth();
+  const { pollingEnabled } = React.useContext(PollingContext);
   const [logFiles, setLogFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -34,10 +36,18 @@ const Logs = () => {
   const [deleteTargetLogFile, setDeleteTargetLogFile] = useState(null);
   const [hardDelete, setHardDelete] = useState(false);
 
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewTargetLogFile, setReviewTargetLogFile] = useState(null);
+  const [reviewIsCorrect, setReviewIsCorrect] = useState(null);
+  const [reviewCorrection, setReviewCorrection] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewSuccess, setReviewSuccess] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+
   // After logFiles are updated, check if polling should be running
   useEffect(() => {
     let interval = null;
-    const shouldPoll = logFiles.some(
+    const shouldPoll = pollingEnabled && logFiles.some(
       (log) =>
         log.status === 'processing' ||
         log.rcaAnalysisStatus === 'pending' ||
@@ -51,7 +61,7 @@ const Logs = () => {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [logFiles]);
+  }, [logFiles, pollingEnabled]);
 
   // On mount, fetch logs and user role
   useEffect(() => {
@@ -63,7 +73,7 @@ const Logs = () => {
     try {
       const response = await api.get('/users/me');
       if (response.data && response.data.user && response.data.user.role) {
-        setUserRole(response.data.user.role);
+      setUserRole(response.data.user.role);
       } else {
         setUserRole('');
       }
@@ -480,6 +490,61 @@ const Logs = () => {
     }
   };
 
+  const handleGiveReview = (logFile) => {
+    setReviewTargetLogFile(logFile);
+    setReviewIsCorrect(null);
+    setReviewCorrection('');
+    setReviewSubmitting(false);
+    setReviewSuccess(false);
+    setReviewError('');
+    setReviewModalOpen(true);
+  };
+
+  const handleReviewSubmit = async (e) => {
+    e.preventDefault();
+    if (!reviewTargetLogFile) return;
+    setReviewSubmitting(true);
+    setReviewError('');
+    setReviewSuccess(false);
+    try {
+      // Find the latest RCA job's analysisMemoryId for this log file
+      // We'll fetch /logs/:id/analyses and use the most recent completed one
+      const analysesRes = await api.get(`/logs/${reviewTargetLogFile.id}/analyses`);
+      console.log('Analyses response for review:', analysesRes.data);
+      const completedJob = (analysesRes.data.analyses || []).find(j => j.status === 'completed');
+      console.log('Completed job for review:', completedJob);
+      if (!completedJob) {
+        setReviewError('No completed RCA job found for this log file.');
+        setReviewSubmitting(false);
+        return;
+      }
+      
+      if (!completedJob.analysisMemoryId) {
+        setReviewError('Completed RCA job found but analysis memory ID is missing.');
+        setReviewSubmitting(false);
+        return;
+      }
+      console.log('Submitting review to:', `/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`);
+      console.log('Review data:', { isCorrect: reviewIsCorrect, correction: reviewCorrection });
+      
+      await api.post(`/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`, {
+        isCorrect: reviewIsCorrect,
+        correction: reviewCorrection,
+      });
+      setReviewSuccess(true);
+      setReviewSubmitting(false);
+      // Update logFiles state to disable the button
+      setLogFiles(prev => prev.map(lf => lf.id === reviewTargetLogFile.id ? { ...lf, hasReview: true } : lf));
+      setTimeout(() => {
+        setReviewModalOpen(false);
+      }, 1200);
+    } catch (err) {
+      console.error('Review submission error:', err);
+      setReviewError('Failed to submit review: ' + (err.response?.data?.error || err.message));
+      setReviewSubmitting(false);
+    }
+  };
+
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -592,12 +657,88 @@ const Logs = () => {
                       <span className="mx-2">•</span>
                       <span>Warnings: {logFile.warningCount}</span>
                       <span className="mx-2">•</span>
-                      <span className={getStatusColor(logFile.status)}>
-                        Status: {logFile.status}
+                      {/* Improved Status badge with new mapping */}
+                      {/* REMOVE THIS GENERIC STATUS BADGE TO AVOID DUPLICATE SUCCESS */}
+                      {/*
+                      <span
+                        className={
+                          !logFile.status || logFile.status === 'not_started'
+                            ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                            : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
+                            ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
+                            : logFile.status === 'failed'
+                            ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
+                            : logFile.status === 'completed'
+                            ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
+                            : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                        }
+                      >
+                        {logFile.status === 'not_started' || !logFile.status
+                          ? 'Not Started'
+                          : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
+                          ? 'In Progress'
+                          : logFile.status === 'failed'
+                          ? 'Failed'
+                          : logFile.status === 'completed'
+                          ? 'Success'
+                          : logFile.status}
                       </span>
                       <span className="mx-2">•</span>
-                      <span className={getStatusColor(logFile.rcaAnalysisStatus)}>
-                        RCA: {logFile.rcaAnalysisStatus || 'not_started'}
+                      */}
+                      {/* Pre-Processing Status badge with label */}
+                      <span className="mr-2">
+                        <span className="font-medium text-xs text-gray-500 mr-1">Pre-Processing Status:</span>
+                        <span
+                          className={
+                            !logFile.status || logFile.status === 'not_started'
+                              ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                              : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
+                              ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
+                              : logFile.status === 'failed'
+                              ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
+                              : logFile.status === 'completed'
+                              ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
+                              : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                          }
+                        >
+                          {logFile.status === 'not_started' || !logFile.status
+                            ? 'Not Started'
+                            : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
+                            ? 'In Progress'
+                            : logFile.status === 'failed'
+                            ? 'Failed'
+                            : logFile.status === 'completed'
+                            ? 'Success'
+                            : logFile.status}
+                        </span>
+                      </span>
+                      <span className="mx-2">•</span>
+                      {/* RCA Status badge with label */}
+                      <span className="ml-2">
+                        <span className="font-medium text-xs text-gray-500 mr-1">RCA Status:</span>
+                        <span
+                          className={
+                            !logFile.rcaAnalysisStatus || logFile.rcaAnalysisStatus === 'not_started'
+                              ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                              : logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running'
+                              ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
+                              : logFile.rcaAnalysisStatus === 'failed'
+                              ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
+                              : logFile.rcaAnalysisStatus === 'completed'
+                              ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
+                              : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                          }
+                        >
+                          {!logFile.rcaAnalysisStatus || logFile.rcaAnalysisStatus === 'not_started'
+                            ? 'Not Started'
+                            : logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running'
+                            ? 'In Progress'
+                            : logFile.rcaAnalysisStatus === 'failed'
+                            ? 'Failed'
+                            : logFile.rcaAnalysisStatus === 'completed'
+                            ? 'Success'
+                            : logFile.rcaAnalysisStatus}
+                        </span>
                       </span>
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
@@ -657,6 +798,14 @@ const Logs = () => {
                           title="Download RCA as PDF"
                         >
                           Download RCA PDF
+                        </button>
+                        <button
+                          onClick={() => handleGiveReview(logFile)}
+                          className={`bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out ${logFile.hasReview ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          disabled={logFile.hasReview}
+                          title={logFile.hasReview ? 'Review already submitted' : 'Give Review'}
+                        >
+                          Give Review
                         </button>
                       </>
                     )}
@@ -959,6 +1108,80 @@ const Logs = () => {
                 Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {reviewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6 relative">
+            <button
+              onClick={() => setReviewModalOpen(false)}
+              className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-2xl"
+              aria-label="Close"
+            >
+              &times;
+            </button>
+            <h2 className="text-lg font-semibold mb-4">Give Review for: <span className="font-mono">{reviewTargetLogFile?.filename}</span></h2>
+            <form onSubmit={handleReviewSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Was the RCA correct?</label>
+                <div className="flex gap-6">
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      name="isCorrect"
+                      value="true"
+                      checked={reviewIsCorrect === true}
+                      onChange={() => setReviewIsCorrect(true)}
+                      className="form-radio"
+                      required
+                    />
+                    <span className="ml-1">Yes</span>
+                  </label>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      name="isCorrect"
+                      value="false"
+                      checked={reviewIsCorrect === false}
+                      onChange={() => setReviewIsCorrect(false)}
+                      className="form-radio"
+                      required
+                    />
+                    <span className="ml-1">No</span>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Comments (optional)</label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-sm"
+                  rows={3}
+                  value={reviewCorrection}
+                  onChange={e => setReviewCorrection(e.target.value)}
+                  placeholder="Add any suggestions, corrections, or feedback..."
+                />
+              </div>
+              {reviewError && <div className="text-red-600 text-sm">{reviewError}</div>}
+              {reviewSuccess && <div className="text-green-600 text-sm">Review submitted! Thank you.</div>}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  onClick={() => setReviewModalOpen(false)}
+                  disabled={reviewSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 font-semibold"
+                  disabled={reviewSubmitting || reviewSuccess}
+                >
+                  {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

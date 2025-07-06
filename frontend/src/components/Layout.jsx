@@ -1,10 +1,16 @@
-import React from 'react'
+import React, { useContext, useState } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+
+// Create a polling context
+export const PollingContext = React.createContext({ pollingEnabled: true, setPollingEnabled: () => {} });
 
 function Layout() {
   const { user, logout } = useAuth()
   const location = useLocation()
+
+  // Add polling state here so it is global
+  const [pollingEnabled, setPollingEnabled] = useState(true);
 
   const navigation = [
     { name: 'Dashboard', href: '/', icon: '📊' },
@@ -20,6 +26,7 @@ function Layout() {
   }
 
   return (
+    <PollingContext.Provider value={{ pollingEnabled, setPollingEnabled }}>
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
@@ -35,8 +42,20 @@ function Layout() {
                 AutoLog
               </h1>
             </div>
-            
             <div className="flex items-center space-x-4">
+              {/* Polling toggle - modern switch style with clear label */}
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-gray-500 font-medium">Polling</span>
+                <label className="relative inline-flex items-center cursor-pointer" aria-label="Toggle polling">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={pollingEnabled}
+                    onChange={() => setPollingEnabled(v => !v)}
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all after:duration-200 peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                </label>
+              </div>
               <span className="text-sm text-gray-700">
                 Welcome, {user?.firstName} {user?.lastName}
               </span>
@@ -83,6 +102,7 @@ function Layout() {
         </main>
       </div>
     </div>
+    </PollingContext.Provider>
   )
 }
 

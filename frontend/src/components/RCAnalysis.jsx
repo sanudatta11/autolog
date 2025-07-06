@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
+import { PollingContext } from './Layout';
 
 const POLL_INTERVAL = 2000;
 
@@ -23,9 +24,17 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [useChunking, setUseChunking] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [logFileDetails, setLogFileDetails] = useState(null);
-  const POLLING_MODES = ['Off', 'RCA Only', 'Processing Only', 'Both'];
-  const [pollingMode, setPollingMode] = useState('Off');
+  const [pollingEnabled, setPollingEnabled] = React.useContext(PollingContext);
   const [showResults, setShowResults] = useState(false);
+
+  // Add modal state
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewTargetJob, setReviewTargetJob] = useState(null);
+  const [reviewIsCorrect, setReviewIsCorrect] = useState(null);
+  const [reviewCorrection, setReviewCorrection] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
+  const [jobFeedbacks, setJobFeedbacks] = useState({}); // { jobId: feedbackObj }
 
   // Helper to poll job status
   const pollJobStatus = (jobId) => {
@@ -52,10 +61,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
 
   // Helper to determine if polling should be active
   const shouldPoll = () => {
-    if (pollingMode === 'Both') return status === 'pending' || status === 'running' || status === 'processing';
-    if (pollingMode === 'RCA Only') return status === 'pending' || status === 'running';
-    if (pollingMode === 'Processing Only') return status === 'processing';
-    return false;
+    return pollingEnabled && (status === 'pending' || status === 'running' || status === 'processing');
   };
 
   // On mount or when logFileId changes, check for active RCA job (but do not set up polling here)
@@ -87,7 +93,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [pollingMode, jobId, status]);
+  }, [jobId, status, pollingEnabled]);
 
   // Fetch all RCA jobs for this log file
   const fetchJobs = async () => {
@@ -129,7 +135,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       setJobId(response.data.jobId);
       setStatus('pending');
       if (shouldPoll()) {
-        pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to start RCA analysis');
@@ -171,14 +177,28 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      await api.post('/feedback', {
-        analysisMemoryId: results?.analysisMemoryId || results?.id, // Use correct ID from RCA result
+      // Get the analysisMemoryId from the latest completed job
+      const response = await api.get(`/logs/${logFileId}/analyses`);
+      console.log('Analyses response:', response.data);
+      const completedJob = (response.data.analyses || []).find(j => j.status === 'completed');
+      console.log('Completed job:', completedJob);
+      if (!completedJob || !completedJob.analysisMemoryId) {
+        alert('No completed RCA job found for this log file.');
+        setIsSubmitting(false);
+        return;
+      }
+      
+      console.log('Submitting feedback to:', `/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`);
+      console.log('Feedback data:', { isCorrect, correction });
+      
+      await api.post(`/api/v1/analyses/${completedJob.analysisMemoryId}/feedback`, {
         isCorrect,
         correction,
       });
       setFeedbackSubmitted(true);
     } catch (err) {
-      alert('Failed to submit feedback');
+      console.error('Feedback submission error:', err);
+      alert('Failed to submit feedback: ' + (err.response?.data?.error || err.message));
     }
     setIsSubmitting(false);
   };
@@ -200,7 +220,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       setJobId(response.data.jobId);
       setStatus('pending');
       if (shouldPoll()) {
-        pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
       }
       
       fetchJobs();
@@ -213,7 +233,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
 
   // Before rendering RCA controls, check if RCA is possible
   if (logFileDetails && logFileDetails.isRCAPossible === false) {
-    return (
+  return (
       <div className="bg-blue-50 border border-blue-200 rounded-md p-4 flex items-center">
         <svg className="h-6 w-6 text-blue-400 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z" /></svg>
         <div>
@@ -293,8 +313,8 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     }
     // Idle, not_started, or completed (no results yet)
     return (
-      <button
-        className="btn btn-primary"
+          <button
+            className="btn btn-primary"
         onClick={handleNewRun}
         disabled={isSubmitting}
       >
@@ -316,45 +336,41 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   // Spinner icon placeholder
   const SpinnerIcon = () => <span className="inline-block animate-spin mr-2">⏳</span>;
 
+  // Fetch feedbacks for all jobs after jobs are loaded
+  useEffect(() => {
+    const fetchFeedbacks = async () => {
+      const feedbackMap = {};
+      for (const job of jobs) {
+        if (job.analysisMemoryId) {
+          try {
+            const res = await api.get(`/api/v1/analyses/${job.analysisMemoryId}/feedback`);
+            if (res.data.feedback && res.data.feedback.length > 0) {
+              feedbackMap[job.id] = res.data.feedback[0];
+            }
+          } catch {}
+        }
+      }
+      setJobFeedbacks(feedbackMap);
+    };
+    if (jobs.length > 0) fetchFeedbacks();
+  }, [jobs]);
+
   return (
     <div className="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-6">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-lg font-semibold text-gray-900">Root Cause Analysis</h2>
         <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs font-semibold text-gray-700 border border-gray-200">{getStatusText()}</span>
       </div>
-      <div>
-        <label className="block text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1">
-          Polling Mode
-          <InfoIcon tooltip="Choose when the app should auto-refresh status." />
-        </label>
-        <div className="flex bg-gray-100 rounded-lg overflow-hidden">
-          {POLLING_MODES.map(mode => (
-            <button
-              key={mode}
-              className={`px-3 py-1 text-xs font-medium transition ${
-                pollingMode === mode
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-700 hover:bg-blue-100'
-              }`}
-              onClick={() => setPollingMode(mode)}
-              type="button"
-            >
-              {mode}
-              {pollingMode === mode && <CheckIcon />}
-            </button>
-          ))}
-        </div>
-      </div>
       {/* Advanced Settings Accordion */}
       <div className="mt-2">
-        <button
+          <button
           type="button"
           className="flex items-center gap-2 text-blue-700 font-medium focus:outline-none"
           onClick={() => setShowAdvanced((v) => !v)}
-        >
+          >
           <ChevronIcon open={showAdvanced} />
           {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
-        </button>
+          </button>
         {showAdvanced && (
           <div className="mt-2 p-4 bg-gray-50 border border-gray-200 rounded-md space-y-3">
             <div>
@@ -391,8 +407,8 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                 </label>
               </div>
             </div>
-          </div>
-        )}
+        </div>
+      )}
       </div>
       {/* Progress percentage and bar if running/pending */}
       {(status === 'pending' || status === 'running') && (
@@ -423,6 +439,50 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
           >
             {showResults ? 'Hide Results' : 'View Results'}
           </button>
+          {/* Feedback Form always visible after RCA completion */}
+          <div className="mt-6 p-4 border rounded bg-gray-50">
+            <h3 className="font-semibold mb-2">Was this analysis correct?</h3>
+            <form onSubmit={handleFeedbackSubmit} className="space-y-3">
+              <div className="flex items-center gap-6 mb-2">
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="isCorrect"
+                    value="true"
+                    checked={isCorrect === true}
+                    onChange={() => setIsCorrect(true)}
+                    className="form-radio"
+                  /> Yes
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="isCorrect"
+                    value="false"
+                    checked={isCorrect === false}
+                    onChange={() => setIsCorrect(false)}
+                    className="form-radio"
+                  /> No
+                </label>
+        </div>
+              <textarea
+                className="w-full border rounded p-2"
+                placeholder="Correction or comments (optional)"
+                value={correction}
+                onChange={e => setCorrection(e.target.value)}
+              />
+              <button
+                type="submit"
+                className="bg-blue-600 text-white px-4 py-2 rounded"
+                disabled={isSubmitting || isCorrect === null}
+              >
+                Submit Feedback
+              </button>
+              {feedbackSubmitted && (
+                <div className="text-green-700 mt-2">Thank you for your feedback!</div>
+              )}
+            </form>
+          </div>
           <div
             className={`transition-all duration-300 overflow-hidden ${showResults ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
           >
@@ -443,11 +503,11 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
               </p>
             </div>
             <div className="bg-white border border-gray-200 rounded-md p-4 mt-2">
-              <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
-              <div className="space-y-3">
-                {(() => {
-                  // Use analysis.final if present, else analysis
-                  const analysis = results.analysis?.final || results.analysis || results;
+          <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
+          <div className="space-y-3">
+            {(() => {
+              // Use analysis.final if present, else analysis
+              const analysis = results.analysis?.final || results.analysis || results;
                   
                   // Check if this is a "no errors found" analysis
                   const isNoErrorsAnalysis = analysis.severity === 'low' && 
@@ -508,119 +568,73 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                   }
 
                   // Standard error analysis display
-                  return (
-                    <>
-                      <div>
-                        <h5 className="text-sm font-medium text-gray-700">Summary</h5>
-                        <p className="text-sm text-gray-600 mt-1">{analysis.summary}</p>
-                      </div>
-                      <div>
-                        <h5 className="text-sm font-medium text-gray-700">Root Cause</h5>
-                        <p className="text-sm text-gray-600 mt-1">{analysis.rootCause}</p>
-                      </div>
-                      <div>
-                        <h5 className="text-sm font-medium text-gray-700">Severity</h5>
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
-                          analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
-                          analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-green-100 text-green-800'
-                        }`}>
-                          {analysis.severity}
-                        </span>
-                      </div>
-                      {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
-                        <div>
-                          <h5 className="text-sm font-medium text-gray-700">Recommendations</h5>
-                          <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
-                            {analysis.recommendations.map((rec, index) => (
-                              <li key={index}>{rec}</li>
-                            ))}
-                          </ul>
-                        </div>
+              return (
+                <>
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">Summary</h5>
+                    <p className="text-sm text-gray-600 mt-1">{analysis.summary}</p>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">Root Cause</h5>
+                    <p className="text-sm text-gray-600 mt-1">{analysis.rootCause}</p>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-medium text-gray-700">Severity</h5>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      analysis.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                      analysis.severity === 'high' ? 'bg-orange-100 text-orange-800' :
+                      analysis.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-green-100 text-green-800'
+                    }`}>
+                      {analysis.severity}
+                    </span>
+                  </div>
+                  {Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0 && (
+                    <div>
+                      <h5 className="text-sm font-medium text-gray-700">Recommendations</h5>
+                      <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
+                        {analysis.recommendations.map((rec, index) => (
+                          <li key={index}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {/* Advanced: Raw LLM response */}
+                  {results.analysis?.rawLLMResponse && (
+                    <div className="mt-4">
+                      <button
+                        className="text-xs text-blue-600 underline"
+                        onClick={() => setShowAdvanced(v => !v)}
+                      >
+                        {showAdvanced ? 'Hide' : 'Show'} Advanced (Raw LLM Response)
+                      </button>
+                      {showAdvanced && (
+                        <pre className="mt-2 p-2 bg-gray-100 text-xs rounded overflow-x-auto max-h-64">
+                          {results.analysis.rawLLMResponse}
+                        </pre>
                       )}
-                      {/* Advanced: Raw LLM response */}
-                      {results.analysis?.rawLLMResponse && (
-                        <div className="mt-4">
-                          <button
-                            className="text-xs text-blue-600 underline"
-                            onClick={() => setShowAdvanced(v => !v)}
-                          >
-                            {showAdvanced ? 'Hide' : 'Show'} Advanced (Raw LLM Response)
-                          </button>
-                          {showAdvanced && (
-                            <pre className="mt-2 p-2 bg-gray-100 text-xs rounded overflow-x-auto max-h-64">
-                              {results.analysis.rawLLMResponse}
-                            </pre>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
-        </>
-      )}
-
-      {status === 'completed' && results && (
-        <div className="mt-6 p-4 border rounded bg-gray-50">
-          <h3 className="font-semibold mb-2">Was this analysis correct?</h3>
-          <form onSubmit={handleFeedbackSubmit}>
-            <div className="mb-2">
-              <label>
-                <input
-                  type="radio"
-                  name="isCorrect"
-                  value="true"
-                  checked={isCorrect === true}
-                  onChange={() => setIsCorrect(true)}
-                /> Yes
-              </label>
-              <label className="ml-4">
-                <input
-                  type="radio"
-                  name="isCorrect"
-                  value="false"
-                  checked={isCorrect === false}
-                  onChange={() => setIsCorrect(false)}
-                /> No
-              </label>
-            </div>
-            <div className="mb-2">
-              <textarea
-                className="w-full border rounded p-2"
-                placeholder="Correction or comments (optional)"
-                value={correction}
-                onChange={e => setCorrection(e.target.value)}
-              />
-            </div>
-            <button
-              type="submit"
-              className="bg-blue-600 text-white px-4 py-2 rounded"
-              disabled={isSubmitting || isCorrect === null}
-            >
-              Submit Feedback
-            </button>
-            {feedbackSubmitted && (
-              <div className="text-green-700 mt-2">Thank you for your feedback!</div>
-            )}
-          </form>
         </div>
+            </div>
+        </>
       )}
 
       {/* Table rendering (replace the old table section) */}
       <div className="mt-8">
         <h3 className="font-semibold mb-2">Past RCA Runs</h3>
         <div className="bg-white shadow rounded-lg overflow-x-auto">
-          {loadingJobs ? (
+        {loadingJobs ? (
             <div className="p-4">Loading past runs...</div>
-          ) : jobs.length === 0 ? (
+        ) : jobs.length === 0 ? (
             <div className="p-4 text-gray-500">No past RCA runs found.</div>
-          ) : (
+        ) : (
             <table className="min-w-full text-sm">
-              <thead>
+            <thead>
                 <tr className="bg-gray-50">
                   <th className="px-3 py-2 text-left">Run #</th>
                   <th className="px-3 py-2 text-left">Status</th>
@@ -631,10 +645,10 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                   <th className="px-3 py-2 text-right">Chunks</th>
                   <th className="px-3 py-2 text-right">Failed Chunk</th>
                   <th className="px-3 py-2 text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job, idx) => (
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((job, idx) => (
                   <tr key={job.id} className={idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'}>
                     <td className="px-3 py-2">{jobs.length - idx}</td>
                     <td className="px-3 py-2">
@@ -666,24 +680,124 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                       >
                         View
                       </button>
+                      {job.status === 'completed' && (
+                        jobFeedbacks[job.id] ? (
+                          <button className="inline-block px-2 py-1 rounded bg-green-400 text-white text-xs font-medium opacity-60 cursor-not-allowed" disabled>Reviewed</button>
+                        ) : (
+                          <button
+                            className="inline-block px-2 py-1 rounded bg-purple-500 text-white text-xs font-medium"
+                            onClick={() => {
+                              setReviewTargetJob(job);
+                              setReviewIsCorrect(null);
+                              setReviewCorrection('');
+                              setReviewModalOpen(true);
+                            }}
+                          >
+                            Give Review
+                          </button>
+                        )
+                      )}
                       {job.status === 'failed' && (
                         <button
                           className="inline-block px-2 py-1 rounded bg-yellow-500 text-white text-xs font-medium"
-                          onClick={handleNewRun}
-                          disabled={isSubmitting}
+                        onClick={handleNewRun}
+                        disabled={isSubmitting}
                           title="Retry RCA"
-                        >
-                          Retry
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
+      </div>
+
+      {/* Review Modal */}
+      {reviewModalOpen && reviewTargetJob && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h3 className="font-semibold text-lg mb-2">Review RCA Run #{jobs.length - jobs.findIndex(j => j.id === reviewTargetJob.id)}</h3>
+            <div className="mb-2 text-sm text-gray-700">
+              <div><b>Status:</b> {reviewTargetJob.status}</div>
+              <div><b>Started:</b> {reviewTargetJob.startedAt ? new Date(reviewTargetJob.startedAt).toLocaleString() : '-'}</div>
+              <div><b>Completed:</b> {reviewTargetJob.completedAt ? new Date(reviewTargetJob.completedAt).toLocaleString() : '-'}</div>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setReviewSubmitting(true);
+                try {
+                  await api.post(`/api/v1/analyses/${reviewTargetJob.analysisMemoryId}/feedback`, {
+                    isCorrect: reviewIsCorrect,
+                    correction: reviewCorrection,
+                  });
+                  setReviewSubmitted(true);
+                  setJobFeedbacks(f => ({ ...f, [reviewTargetJob.id]: { isCorrect: reviewIsCorrect, correction: reviewCorrection } }));
+                  setTimeout(() => {
+                    setReviewModalOpen(false);
+                    setReviewSubmitted(false);
+                  }, 1200);
+                } catch {
+                  alert('Failed to submit review');
+                }
+                setReviewSubmitting(false);
+              }}
+              className="space-y-3"
+            >
+              <div className="flex items-center gap-6 mb-2">
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="reviewIsCorrect"
+                    value="true"
+                    checked={reviewIsCorrect === true}
+                    onChange={() => setReviewIsCorrect(true)}
+                    className="form-radio"
+                  /> Yes
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="reviewIsCorrect"
+                    value="false"
+                    checked={reviewIsCorrect === false}
+                    onChange={() => setReviewIsCorrect(false)}
+                    className="form-radio"
+                  /> No
+                </label>
+              </div>
+              <textarea
+                className="w-full border rounded p-2"
+                placeholder="Correction or comments (optional)"
+                value={reviewCorrection}
+                onChange={e => setReviewCorrection(e.target.value)}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded bg-gray-200 text-gray-700"
+                  onClick={() => setReviewModalOpen(false)}
+                  disabled={reviewSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded bg-blue-600 text-white"
+                  disabled={reviewSubmitting || reviewIsCorrect === null}
+                >
+                  {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                </button>
+              </div>
+              {reviewSubmitted && <div className="text-green-700 mt-2">Thank you for your feedback!</div>}
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

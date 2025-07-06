@@ -184,6 +184,46 @@ func (lc *LogController) GetLogFiles(c *gin.Context) {
 	var total int64
 	lc.db.Model(&models.LogFile{}).Where("uploaded_by = ?", userID).Count(&total)
 
+	// Build response with hasReview for each log file
+	logFilesWithReview := make([]map[string]interface{}, 0, len(logFiles))
+	for _, logFile := range logFiles {
+		logFileMap := map[string]interface{}{
+			"id":                   logFile.ID,
+			"filename":             logFile.Filename,
+			"size":                 logFile.Size,
+			"uploadedBy":           logFile.UploadedBy,
+			"status":               logFile.Status,
+			"entryCount":           logFile.EntryCount,
+			"errorCount":           logFile.ErrorCount,
+			"warningCount":         logFile.WarningCount,
+			"processedAt":          logFile.ProcessedAt,
+			"rcaAnalysisStatus":    logFile.RCAAnalysisStatus,
+			"rcaAnalysisJobId":     logFile.RCAAnalysisJobID,
+			"isRCAPossible":        logFile.IsRCAPossible,
+			"rcaNotPossibleReason": logFile.RCANotPossibleReason,
+			"createdAt":            logFile.CreatedAt,
+			"updatedAt":            logFile.UpdatedAt,
+		}
+
+		hasReview := false
+		// Find latest completed RCA job for this logFile
+		var job models.Job
+		err := lc.db.Where("log_file_id = ? AND type = ? AND status = ?", logFile.ID, "rca_analysis", "completed").Order("created_at desc").First(&job).Error
+		if err == nil && job.ID != 0 {
+			// Find LogAnalysisMemory for this logFile (latest)
+			var memory models.LogAnalysisMemory
+			errMem := lc.db.Where("log_file_id = ?", logFile.ID).Order("created_at desc").First(&memory).Error
+			if errMem == nil && memory.ID != 0 {
+				// Check for feedback
+				var feedback models.LogAnalysisFeedback
+				errFb := lc.db.Where("analysis_memory_id = ?", memory.ID).First(&feedback).Error
+				hasReview = (errFb == nil && feedback.ID != 0)
+			}
+		}
+		logFileMap["hasReview"] = hasReview
+		logFilesWithReview = append(logFilesWithReview, logFileMap)
+	}
+
 	logEntry.Info("Log files retrieved successfully", map[string]interface{}{
 		"count": len(logFiles),
 		"total": total,
@@ -192,7 +232,7 @@ func (lc *LogController) GetLogFiles(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{
-		"logFiles": logFiles,
+		"logFiles": logFilesWithReview,
 		"pagination": gin.H{
 			"page":  page,
 			"limit": limit,
@@ -722,6 +762,33 @@ func (lc *LogController) GetLogAnalyses(c *gin.Context) {
 				analysis["errorCount"] = analysisData["errorCount"]
 				analysis["warningCount"] = analysisData["warningCount"]
 			}
+			// Find LogAnalysisMemory for this log file that was created around the same time as job completion
+			var memory models.LogAnalysisMemory
+			// Look for memory created within 5 minutes of job completion
+			jobCompletionTime := job.CompletedAt
+			if jobCompletionTime != nil {
+				timeWindow := 5 * time.Minute
+				startTime := jobCompletionTime.Add(-timeWindow)
+				endTime := jobCompletionTime.Add(timeWindow)
+
+				errMem := lc.db.Where("log_file_id = ? AND created_at BETWEEN ? AND ?",
+					job.LogFileID, startTime, endTime).Order("created_at desc").First(&memory).Error
+				if errMem == nil && memory.ID != 0 {
+					analysis["analysisMemoryId"] = memory.ID
+				} else {
+					// Fallback: get the latest memory for this log file
+					errMem = lc.db.Where("log_file_id = ?", job.LogFileID).Order("created_at desc").First(&memory).Error
+					if errMem == nil && memory.ID != 0 {
+						analysis["analysisMemoryId"] = memory.ID
+					}
+				}
+			} else {
+				// Fallback: get the latest memory for this log file
+				errMem := lc.db.Where("log_file_id = ?", job.LogFileID).Order("created_at desc").First(&memory).Error
+				if errMem == nil && memory.ID != 0 {
+					analysis["analysisMemoryId"] = memory.ID
+				}
+			}
 		}
 
 		analyses = append(analyses, analysis)
@@ -800,6 +867,10 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 	}()
 
 	if hardDelete {
+		logEntry.Info("Performing HARD DELETE", map[string]interface{}{
+			"log_file_id": logFileID,
+		})
+
 		// HARD DELETE: Remove all related data from all DB tables
 		// 1. Delete all jobs for this log file
 		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.Job{}).Error; err != nil {
@@ -808,6 +879,8 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
 			return
 		}
+		logEntry.Info("Deleted jobs for log file", map[string]interface{}{"log_file_id": logFileID})
+
 		// 2. Delete all log entries for this log file
 		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.LogEntry{}).Error; err != nil {
 			tx.Rollback()
@@ -815,6 +888,8 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
 			return
 		}
+		logEntry.Info("Deleted log entries for log file", map[string]interface{}{"log_file_id": logFileID})
+
 		// 3. Delete all log analyses for this log file
 		if err := tx.Where("log_file_id = ?", logFileID).Unscoped().Delete(&models.LogAnalysis{}).Error; err != nil {
 			tx.Rollback()
@@ -822,6 +897,8 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log analyses"})
 			return
 		}
+		logEntry.Info("Deleted log analyses for log file", map[string]interface{}{"log_file_id": logFileID})
+
 		// 4. Delete all log analysis memories for this log file
 		var analysisMemories []models.LogAnalysisMemory
 		if err := tx.Where("log_file_id = ?", logFileID).Find(&analysisMemories).Error; err == nil && len(analysisMemories) > 0 {
@@ -829,10 +906,24 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 			for _, m := range analysisMemories {
 				memoryIDs = append(memoryIDs, m.ID)
 			}
+			logEntry.Info("Found analysis memories to delete", map[string]interface{}{
+				"log_file_id":  logFileID,
+				"memory_count": len(memoryIDs),
+			})
+
 			// 5. Delete all feedback for these analysis memories
 			if err := tx.Where("analysis_memory_id IN ?", memoryIDs).Delete(&models.LogAnalysisFeedback{}).Error; err != nil {
-				// If feedback is not present, ignore or log
+				logEntry.Warn("Failed to delete feedback for analysis memories", map[string]interface{}{
+					"log_file_id": logFileID,
+					"error":       err.Error(),
+				})
+				// Continue with deletion even if feedback deletion fails
+			} else {
+				logEntry.Info("Deleted feedback for analysis memories", map[string]interface{}{
+					"log_file_id": logFileID,
+				})
 			}
+
 			// 6. Delete the analysis memories themselves
 			if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogAnalysisMemory{}).Error; err != nil {
 				tx.Rollback()
@@ -840,15 +931,24 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log analysis memories"})
 				return
 			}
+			logEntry.Info("Deleted analysis memories for log file", map[string]interface{}{"log_file_id": logFileID})
+		} else {
+			logEntry.Info("No analysis memories found for log file", map[string]interface{}{"log_file_id": logFileID})
 		}
+
 		// 7. Delete the log file itself
-		if err := tx.Delete(&logFile).Error; err != nil {
+		if err := tx.Unscoped().Delete(&logFile).Error; err != nil {
 			tx.Rollback()
 			logger.WithError(err, "log_controller").Error("Failed to delete log file")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
 			return
 		}
+		logEntry.Info("Deleted log file record", map[string]interface{}{"log_file_id": logFileID})
 	} else {
+		logEntry.Info("Performing SOFT DELETE", map[string]interface{}{
+			"log_file_id": logFileID,
+		})
+
 		// SOFT DELETE: Only remove jobs, log entries, and the log file
 		if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.Job{}).Error; err != nil {
 			tx.Rollback()
@@ -856,20 +956,26 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete analysis jobs"})
 			return
 		}
+		logEntry.Info("Deleted jobs for log file (soft delete)", map[string]interface{}{"log_file_id": logFileID})
+
 		if err := tx.Where("log_file_id = ?", logFileID).Delete(&models.LogEntry{}).Error; err != nil {
 			tx.Rollback()
 			logger.WithError(err, "log_controller").Error("Failed to delete log entries")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log entries"})
 			return
 		}
+		logEntry.Info("Deleted log entries for log file (soft delete)", map[string]interface{}{"log_file_id": logFileID})
+
 		if err := tx.Delete(&logFile).Error; err != nil {
 			tx.Rollback()
 			logger.WithError(err, "log_controller").Error("Failed to delete log file")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete log file"})
 			return
 		}
+		logEntry.Info("Deleted log file record (soft delete)", map[string]interface{}{"log_file_id": logFileID})
 	}
 
+	logEntry.Info("Committing transaction", map[string]interface{}{"log_file_id": logFileID})
 	if err := tx.Commit().Error; err != nil {
 		logger.WithError(err, "log_controller").Error("Failed to commit transaction")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
@@ -878,6 +984,7 @@ func (lc *LogController) DeleteLogFile(c *gin.Context) {
 
 	logEntry.Info("Log file deleted successfully", map[string]interface{}{
 		"log_file_id": logFile.ID,
+		"hard_delete": hardDelete,
 	})
 
 	c.JSON(http.StatusOK, gin.H{"message": "Log file deleted successfully"})

@@ -127,3 +127,6 @@ backend/data/responses/
 backend/data/sample-logs*.json
 backend/data/sample-logs*.txt 
 logparser_service/__pycache__/
+
+# AIR build output
+backend/tmp/
