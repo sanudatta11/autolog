@@ -6,6 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"context"
+	"runtime"
+	"sync"
+	"syscall"
+
 	"github.com/autolog/backend/internal/logger"
 	"github.com/autolog/backend/internal/models"
 	"gorm.io/gorm"
@@ -375,6 +380,14 @@ func (js *JobService) saveAnalysisAndMemory(jobID uint, logFile *models.LogFile,
 	}
 }
 
+func getAvailableMemoryMB() int {
+	var sysinfo syscall.Sysinfo_t
+	if err := syscall.Sysinfo(&sysinfo); err != nil {
+		return 1024 // fallback to 1GB if unknown
+	}
+	return int(sysinfo.Freeram / 1024 / 1024)
+}
+
 func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
@@ -431,42 +444,88 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		})
 	}
 
-	var partialResults []*LogAnalysisResponse
+	// Calculate concurrency: 70% of available CPU cores and memory
+	maxProcs := runtime.NumCPU()
+	cpuLimit := int(float64(maxProcs) * 0.7)
+	if cpuLimit < 1 {
+		cpuLimit = 1
+	}
+	memMB := getAvailableMemoryMB()
+	memLimit := memMB / 300 // assume each chunk/LLM call uses ~300MB
+	if memLimit < 1 {
+		memLimit = 1
+	}
+	concurrency := cpuLimit
+	if memLimit < cpuLimit {
+		concurrency = memLimit
+	}
+	if concurrency > len(chunks) {
+		concurrency = len(chunks)
+	}
+	logger.Info("[RCA] Dynamic concurrency calculation", map[string]interface{}{"cpuLimit": cpuLimit, "memLimit": memLimit, "finalConcurrency": concurrency, "availableMB": memMB, "maxProcs": maxProcs, "chunks": len(chunks)})
+
+	results := make([]*LogAnalysisResponse, len(chunks))
+	errs := make([]error, len(chunks))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, concurrency)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex // For any shared state (currently only logger and results/errs slices, which are safe by index)
 	for i, chunk := range chunks {
-		currentChunk := i + 1
-		// Update currentChunk in the job
-		js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", currentChunk)
+		wg.Add(1)
+		go func(idx int, chunk []models.LogEntry) {
+			defer wg.Done()
+			logger.Info("[RCA] Waiting for worker slot", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+			sem <- struct{}{} // acquire
+			logger.Info("[RCA] Worker acquired", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+			defer func() {
+				<-sem // release
+				logger.Info("[RCA] Worker released", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+			}()
 
-		// Check for shutdown before processing chunk
-		select {
-		case <-stopChan:
-			return nil, fmt.Errorf("job cancelled during chunk processing")
-		default:
+			var analysis *LogAnalysisResponse
+			var err error
+			for attempt := 1; attempt <= 3; attempt++ {
+				logger.Info("[RCA] Chunk analysis started", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt})
+				select {
+				case <-ctx.Done():
+					logger.Warn("[RCA] Chunk cancelled by context", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
+					return
+				case <-stopChan:
+					logger.Warn("[RCA] Chunk cancelled by stopChan", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
+					return
+				default:
+				}
+				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext)
+				if err == nil {
+					logger.Info("[RCA] Chunk analysis completed", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt})
+					results[idx] = analysis
+					return
+				}
+				logger.Warn("[RCA] Chunk analysis failed, retrying", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt, "error": err.Error()})
+				time.Sleep(500 * time.Millisecond)
+			}
+			logger.Error("[RCA] Chunk analysis failed after retries", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "error": err.Error()})
+			errs[idx] = fmt.Errorf("chunk %d analysis failed after 3 retries: %w", idx+1, err)
+			// Cancel all other work if a chunk fails after retries
+			cancel()
+		}(i, chunk)
+	}
+	wg.Wait()
+
+	// Check for errors and aggregate results
+	var partialResults []*LogAnalysisResponse
+	for i, res := range results {
+		if errs[i] != nil {
+			*failedChunk = i + 1
+			logger.Error("[RCA] Chunk analysis failed after retries", map[string]interface{}{"jobID": jobID, "chunk": i + 1, "error": errs[i].Error()})
+			return nil, errs[i]
 		}
-
-		// Process chunk with enhanced context
-		analysis, err := js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext)
-		if err != nil {
-			*failedChunk = currentChunk
-			logger.Error("[RCA] Chunk analysis failed", map[string]interface{}{
-				"jobID":       jobID,
-				"chunk":       currentChunk,
-				"totalChunks": len(chunks),
-				"error":       err.Error(),
-			})
-			return nil, fmt.Errorf("chunk %d analysis failed: %w", currentChunk, err)
-		}
-
-		partialResults = append(partialResults, analysis)
-		progress := int(float64(currentChunk) / float64(len(chunks)) * 80) // 80% for chunk processing
-		js.updateJobProgress(jobID, progress)
-
-		logger.Info("[RCA] Chunk processed successfully", map[string]interface{}{
-			"jobID":       jobID,
-			"chunk":       currentChunk,
-			"totalChunks": len(chunks),
-			"severity":    analysis.Severity,
-		})
+		partialResults = append(partialResults, res)
 	}
 
 	return partialResults, nil
