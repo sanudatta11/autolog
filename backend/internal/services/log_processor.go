@@ -20,14 +20,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Helper function for min
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 type lineCategory int
 
 const (

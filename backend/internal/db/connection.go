@@ -184,6 +184,23 @@ func AutoMigrate() {
 	}
 	log.Println("✅ ParsingRuleUsage table migrated successfully")
 
+	// Add pattern models for learning functionality
+	log.Println("Testing migration with Pattern model...")
+	err = DB.AutoMigrate(&models.Pattern{})
+	if err != nil {
+		log.Printf("Pattern migration failed: %v", err)
+		return
+	}
+	log.Println("✅ Pattern table migrated successfully")
+
+	log.Println("Testing migration with PatternExample model...")
+	err = DB.AutoMigrate(&models.PatternExample{})
+	if err != nil {
+		log.Printf("PatternExample migration failed: %v", err)
+		return
+	}
+	log.Println("✅ PatternExample table migrated successfully")
+
 	log.Println("✅ All database migrations completed successfully")
 }
 

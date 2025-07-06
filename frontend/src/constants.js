@@ -1,6 +1,13 @@
 // Time intervals
 export const LOGS_POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
 
+// Polling configuration
+// Set ENABLE_POLLING to true to enable automatic polling for:
+// - Log file processing status updates
+// - RCA analysis status updates
+// When disabled (false), users will need to manually refresh the page to see status changes
+export const ENABLE_POLLING = false; // Set to true to enable polling for processing status and RCA status
+
 // Progress bar
 export const UPLOAD_PROGRESS_BAR_HEIGHT = 3; // px
 

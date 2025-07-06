@@ -7,6 +7,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
   LOGS_POLL_INTERVAL_MS,
+  ENABLE_POLLING,
   UPLOAD_PROGRESS_BAR_HEIGHT,
   PDF_SUMMARY_WRAP_WIDTH,
   PDF_ROOT_CAUSE_WRAP_WIDTH,
@@ -37,7 +38,7 @@ const Logs = () => {
   // After logFiles are updated, check if polling should be running
   useEffect(() => {
     let interval = null;
-    const shouldPoll = logFiles.some(
+    const shouldPoll = ENABLE_POLLING && logFiles.some(
       (log) =>
         log.status === 'processing' ||
         log.rcaAnalysisStatus === 'pending' ||
@@ -146,8 +147,10 @@ const Logs = () => {
           }
         }
       };
-      // Start polling every 2 seconds
-      pollInterval = setInterval(pollLogFileStatus, 2000);
+      // Start polling every 2 seconds only if polling is enabled
+      if (ENABLE_POLLING) {
+        pollInterval = setInterval(pollLogFileStatus, 2000);
+      }
       // Run once immediately
       pollLogFileStatus();
     } catch (error) {
@@ -479,7 +482,18 @@ const Logs = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-8">Log Analysis & RCA</h1>
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-3xl font-bold">Log Analysis & RCA</h1>
+        <div className="flex items-center space-x-2">
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            ENABLE_POLLING 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-gray-100 text-gray-800'
+          }`}>
+            {ENABLE_POLLING ? '🔄 Polling Enabled' : '⏸️ Polling Disabled'}
+          </span>
+        </div>
+      </div>
 
       {/* Log Sources Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

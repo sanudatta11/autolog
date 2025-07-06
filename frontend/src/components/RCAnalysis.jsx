@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
+import { ENABLE_POLLING } from '../constants';
 
 const POLL_INTERVAL = 2000;
 
@@ -58,7 +59,9 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         setJobId(activeJob.id);
         setProgress(activeJob.progress || 0);
         setStatus(activeJob.status);
-        pollingRef.current = setInterval(() => pollJobStatus(activeJob.id), POLL_INTERVAL);
+        if (ENABLE_POLLING) {
+          pollingRef.current = setInterval(() => pollJobStatus(activeJob.id), POLL_INTERVAL);
+        }
       }
     });
     return () => {
@@ -106,7 +109,9 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       const response = await api.post(`/logs/${logFileId}/analyze`);
       setJobId(response.data.jobId);
       setStatus('pending');
-      pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      if (ENABLE_POLLING) {
+        pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to start RCA analysis');
       setStatus('failed');
@@ -175,7 +180,9 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       
       setJobId(response.data.jobId);
       setStatus('pending');
-      pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      if (ENABLE_POLLING) {
+        pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
+      }
       
       fetchJobs();
     } catch (err) {
@@ -198,19 +205,122 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     );
   }
 
+  // Advanced settings dropdown
+  const AdvancedSettings = () => (
+    <div className="mb-2">
+      <button
+        type="button"
+        className="text-blue-600 text-sm underline focus:outline-none"
+        onClick={() => setShowAdvanced((v) => !v)}
+      >
+        {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
+      </button>
+      {showAdvanced && (
+        <div className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-md space-y-2">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">LLM Timeout (seconds)</label>
+            <input
+              type="number"
+              min={30}
+              max={1800}
+              value={llmTimeout}
+              onChange={e => setLlmTimeout(Number(e.target.value))}
+              className="w-24 px-2 py-1 border rounded text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Chunking</label>
+            <div className="flex items-center space-x-4">
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  checked={useChunking}
+                  onChange={() => setUseChunking(true)}
+                  className="form-radio"
+                />
+                <span className="ml-1 text-sm">Yes</span>
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  checked={!useChunking}
+                  onChange={() => setUseChunking(false)}
+                  className="form-radio"
+                />
+                <span className="ml-1 text-sm">No</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // Main RCA action button logic
+  const renderMainButton = () => {
+    if (status === 'pending' || status === 'running') {
+      return (
+        <button className="btn btn-primary opacity-60 cursor-not-allowed" disabled>
+          RCA Analysis In Progress...
+        </button>
+      );
+    }
+    if (status === 'completed' && results) {
+      return (
+        <button className="btn btn-primary" onClick={getResults}>
+          View Results
+        </button>
+      );
+    }
+    // Idle, not_started, or completed (no results yet)
+    return (
+      <button
+        className="btn btn-primary"
+        onClick={handleNewRun}
+        disabled={isSubmitting}
+      >
+        {isSubmitting ? 'Starting...' : 'Start RCA Analysis'}
+      </button>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-medium">Root Cause Analysis</h3>
         <div className="flex items-center space-x-2">
-          <span className={`text-sm font-medium ${getStatusColor()}`}>
-            {getStatusText()}
-          </span>
+          <span className={`text-sm font-medium ${getStatusColor()}`}>{getStatusText()}</span>
           {status === 'running' && (
             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
           )}
+          {status === 'pending' && (
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500"></div>
+          )}
         </div>
       </div>
+
+      {/* Progress bar if running/pending */}
+      {(status === 'pending' || status === 'running') && (
+        <div className="w-full bg-blue-200 rounded-full h-2 mb-2">
+          <div 
+            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          ></div>
+        </div>
+      )}
+
+      {/* Error message */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-md p-3">
+          <p className="text-red-800 text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* Advanced settings dropdown */}
+      <AdvancedSettings />
+
+      {/* Main RCA action button */}
+      <div>{renderMainButton()}</div>
 
       {/* Show chunk info if available */}
       {totalChunks && (
@@ -218,12 +328,6 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       )}
       {failedChunk && status === 'failed' && (
         <div className="text-xs text-red-600">Failed at chunk: {failedChunk}</div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-3">
-          <p className="text-red-800 text-sm">{error}</p>
-        </div>
       )}
 
       {/* Retry button if failed and failedChunk is set */}
@@ -241,76 +345,9 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         </div>
       )}
 
-      {/* Only show the button if not in progress */}
-      {(status === 'idle' || status === 'not_started' || status === 'completed') && (
-        <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
-          <p className="text-gray-600 text-sm mb-3">
-            Start a Root Cause Analysis to get detailed insights into your log file.
-          </p>
-          {/* Check if log file has no errors and show a note */}
-          {logFileDetails && logFileDetails.errorCount === 0 && (
-            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
-              <p className="text-sm text-blue-800">
-                <strong>Note:</strong> This log file contains no ERROR or FATAL entries. 
-                RCA analysis will confirm that no errors were detected and your system is healthy.
-              </p>
-            </div>
-          )}
-          <button
-            onClick={startAnalysis}
-            className="btn btn-primary"
-          >
-            Start RCA Analysis
-          </button>
-        </div>
-      )}
-
-      {(status === 'pending' || status === 'running') && (
-        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-blue-800 text-sm font-medium">
-              RCA Analysis in Progress...
-            </p>
-            <span className="text-blue-600 text-sm">{progress}%</span>
-          </div>
-          <div className="w-full bg-blue-200 rounded-full h-2">
-            <div 
-              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            ></div>
-          </div>
-          <p className="text-blue-700 text-xs mt-2">
-            This may take a few minutes. You can continue using the application.
-          </p>
-          {status === 'running' && totalChunks && (
-            <div className="mb-2 text-sm text-gray-700">
-              Divided into {totalChunks} chunks.<br />
-              {currentChunk ? (
-                <>Processing chunk {currentChunk} of {totalChunks}...</>
-              ) : (
-                <>Preparing chunks...</>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {status === 'completed' && !results && (
-        <div className="bg-green-50 border border-green-200 rounded-md p-4">
-          <p className="text-green-800 text-sm mb-3">
-            RCA Analysis completed successfully!
-          </p>
-          <button
-            onClick={getResults}
-            className="btn btn-primary"
-          >
-            View Results
-          </button>
-        </div>
-      )}
-
+      {/* RCA Results Section (as before) */}
       {status === 'completed' && results && (
-        <div className="bg-green-50 border border-green-200 rounded-md p-4">
+        <div className="bg-green-50 border border-green-200 rounded-md p-4 mt-4">
           <p className="text-green-800 text-sm mb-3">
             {(() => {
               const analysis = results.analysis?.final || results.analysis || results;
@@ -320,7 +357,6 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
                 (!analysis.errorAnalysis || analysis.errorAnalysis.length === 0) &&
                 (analysis.summary?.toLowerCase().includes('no error') || 
                  analysis.rootCause?.toLowerCase().includes('no error'));
-              
               return isNoErrorsAnalysis 
                 ? "RCA Analysis completed successfully! ✅ No errors detected - your system is healthy."
                 : "RCA Analysis completed successfully! Issues have been identified and analyzed.";
@@ -329,8 +365,9 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         </div>
       )}
 
+      {/* (Keep the rest of the results/feedback UI as before) */}
       {results && (
-        <div className="bg-white border border-gray-200 rounded-md p-4">
+        <div className="bg-white border border-gray-200 rounded-md p-4 mt-2">
           <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
           <div className="space-y-3">
             {(() => {
@@ -498,46 +535,6 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
 
       <div className="mt-8">
         <h3 className="font-semibold mb-2">Start New RCA Analysis</h3>
-        <div className="mb-2">
-          <label className="mr-2 font-medium">LLM Timeout (seconds):</label>
-          <input
-            type="number"
-            min="30"
-            max="1800"
-            value={llmTimeout}
-            onChange={e => setLlmTimeout(Number(e.target.value))}
-            disabled={isSubmitting || status === 'running' || status === 'pending'}
-            className="border rounded px-2 py-1 w-24"
-          />
-        </div>
-        <div className="mb-2">
-          <span className="font-medium mr-2">Chunking:</span>
-          <label className="mr-4">
-            <input
-              type="radio"
-              name="chunking"
-              checked={useChunking}
-              onChange={() => setUseChunking(true)}
-              disabled={isSubmitting || status === 'running' || status === 'pending'}
-            /> Yes
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="chunking"
-              checked={!useChunking}
-              onChange={() => setUseChunking(false)}
-              disabled={isSubmitting || status === 'running' || status === 'pending'}
-            /> No
-          </label>
-        </div>
-        <button
-          className="mb-2 bg-blue-600 text-white px-3 py-1 rounded"
-          onClick={handleNewRun}
-          disabled={isSubmitting || status === 'running' || status === 'pending'}
-        >
-          Trigger New RCA Run
-        </button>
         {loadingJobs ? (
           <div>Loading past runs...</div>
         ) : jobs.length === 0 ? (

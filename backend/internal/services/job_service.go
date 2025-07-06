@@ -1,11 +1,13 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	helpers "github.com/autolog/backend/internal/helpers"
 	"github.com/autolog/backend/internal/logger"
 	"github.com/autolog/backend/internal/models"
 	"gorm.io/gorm"
@@ -855,7 +857,41 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 	for i, p := range partials {
 		summaryParts = append(summaryParts, fmt.Sprintf("Chunk %d: %s", i+1, p.Summary))
 	}
-	prompt := fmt.Sprintf(`You are an expert SRE. Given the following partial RCA analyses for log file '%s', produce a single, comprehensive root cause analysis report.\n\n%s\n\nIMPORTANT: Return ONLY valid JSON in the exact format specified below. Do not include any explanatory text, introductions, or markdown formatting.\n\nRequired JSON format: ...`, logFile.Filename, strings.Join(summaryParts, "\n"))
+	prompt := fmt.Sprintf(`You are an expert SRE performing Root Cause Analysis (RCA) aggregation. 
+
+Given the following partial RCA analyses for log file '%s', produce a single, comprehensive root cause analysis report.
+
+PARTIAL ANALYSES:
+%s
+
+CRITICAL REQUIREMENT: You must return ONLY a valid JSON object in the exact format specified below. Do not include any explanatory text, introductions, markdown formatting, or notes.
+
+If you cannot determine a single cumulative RCA, create a merged RCA by combining all partial analyses as a fallback. Do not return an empty or incomplete object.
+
+REQUIRED JSON FORMAT (return exactly this structure):
+{
+  "summary": "A concise summary focusing on the most critical errors and their impact (2-3 sentences)",
+  "severity": "low|medium|high|critical",
+  "rootCause": "The primary root cause that explains most of the errors, with step-by-step reasoning",
+  "recommendations": ["specific_action1", "specific_action2", "specific_action3"],
+  "errorAnalysis": [
+    {
+      "errorPattern": "The pattern or category of this error",
+      "errorCount": 5,
+      "firstOccurrence": "2024-01-15 10:30:00",
+      "lastOccurrence": "2024-01-15 11:45:00",
+      "severity": "critical|non-critical",
+      "rootCause": "Specific root cause for this error pattern",
+      "impact": "What is broken or affected by this error",
+      "fix": "Specific fix or solution for this error pattern",
+      "relatedErrors": ["related_error_message1", "related_error_message2"]
+    }
+  ],
+  "criticalErrors": 3,
+  "nonCriticalErrors": 2
+}
+
+IMPORTANT: Start your response with { and end with }. Do not include any text before or after the JSON object.`, logFile.Filename, strings.Join(summaryParts, "\n"))
 
 	logger.Info("[RCA] Starting final LLM aggregation request...", nil)
 	response, err := js.llmService.callLLM(prompt)
@@ -870,7 +906,19 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 		logger.Error("[RCA] LLM aggregation response parsing failed", map[string]interface{}{"error": err})
 		logger.Info("[RCA] Raw LLM response", map[string]interface{}{"response": response})
 		logger.Info("[RCA] Cleaned response", map[string]interface{}{"response": cleanResponse})
-		return nil, response, fmt.Errorf("failed to parse LLM aggregation response: %w", err)
+
+		// Try to parse the alternative format (rootCauses array)
+		alternativeAnalysis, altErr := js.parseAlternativeLLMResponse(cleanResponse, partials)
+		if altErr != nil {
+			logger.Error("[RCA] Alternative parsing also failed", map[string]interface{}{"error": altErr})
+			return nil, response, fmt.Errorf("failed to parse LLM aggregation response: %w", err)
+		}
+
+		if alternativeAnalysis.Summary == "" || alternativeAnalysis.RootCause == "" {
+			return nil, response, fmt.Errorf("LLM aggregation returned incomplete analysis")
+		}
+
+		return alternativeAnalysis, response, nil
 	}
 
 	if aggregated.Summary == "" || aggregated.RootCause == "" {
@@ -908,6 +956,81 @@ func (js *JobService) extractJSONFromResponse(response string) string {
 	}
 
 	return strings.TrimSpace(response)
+}
+
+// parseAlternativeLLMResponse parses the alternative LLM response format with rootCauses array
+func (js *JobService) parseAlternativeLLMResponse(response string, partials []*LogAnalysisResponse) (*LogAnalysisResponse, error) {
+	// Try to parse the rootCauses format
+	var rootCausesData struct {
+		RootCauses []struct {
+			Chunk  string `json:"chunk"`
+			Causes []struct {
+				Type        string `json:"type"`
+				Description string `json:"description"`
+			} `json:"causes"`
+		} `json:"rootCauses"`
+	}
+
+	if err := json.Unmarshal([]byte(response), &rootCausesData); err != nil {
+		return nil, fmt.Errorf("failed to parse rootCauses format: %w", err)
+	}
+
+	// Aggregate information from the rootCauses format
+	var allCauses []string
+	var criticalErrors, nonCriticalErrors int
+	var errorAnalysis []DetailedErrorAnalysis
+
+	// Count errors from partials
+	for _, partial := range partials {
+		criticalErrors += partial.CriticalErrors
+		nonCriticalErrors += partial.NonCriticalErrors
+		errorAnalysis = append(errorAnalysis, partial.ErrorAnalysis...)
+	}
+
+	// Extract causes from the rootCauses format
+	for _, rootCause := range rootCausesData.RootCauses {
+		for _, cause := range rootCause.Causes {
+			allCauses = append(allCauses, fmt.Sprintf("%s: %s", cause.Type, cause.Description))
+		}
+	}
+
+	// Create a consolidated analysis
+	summary := "System errors detected across multiple log chunks requiring attention."
+	if len(allCauses) > 0 {
+		summary = fmt.Sprintf("Multiple issues detected: %s", strings.Join(allCauses[:helpers.Min(3, len(allCauses))], "; "))
+	}
+
+	rootCause := "Multiple system issues identified across different log chunks."
+	if len(allCauses) > 0 {
+		rootCause = fmt.Sprintf("Primary issues: %s", strings.Join(allCauses[:helpers.Min(2, len(allCauses))], "; "))
+	}
+
+	// Determine severity based on error counts
+	severity := "medium"
+	if criticalErrors > 5 {
+		severity = "critical"
+	} else if criticalErrors > 2 {
+		severity = "high"
+	} else if criticalErrors == 0 && nonCriticalErrors == 0 {
+		severity = "low"
+	}
+
+	// Generate recommendations based on the causes
+	recommendations := []string{
+		"Review and address the identified system issues",
+		"Implement monitoring for the affected components",
+		"Consider implementing automated recovery mechanisms",
+	}
+
+	return &LogAnalysisResponse{
+		Summary:           summary,
+		Severity:          severity,
+		RootCause:         rootCause,
+		Recommendations:   recommendations,
+		ErrorAnalysis:     errorAnalysis,
+		CriticalErrors:    criticalErrors,
+		NonCriticalErrors: nonCriticalErrors,
+	}, nil
 }
 
 // updateJobProgress updates the job progress

@@ -296,8 +296,8 @@ func (ls *LearningService) identifyPatterns(errorEntries []models.LogEntry) ([]P
 	var matches []PatternMatch
 
 	// Get all known patterns from database
-	var patterns []Pattern
-	if err := ls.db.Find(&patterns).Error; err != nil {
+	patterns, err := ls.GetPatterns()
+	if err != nil {
 		return nil, fmt.Errorf("failed to load patterns: %w", err)
 	}
 
@@ -466,13 +466,27 @@ func (ls *LearningService) extractKeywords(patternName string) []string {
 
 // updatePattern updates or creates a pattern in the database
 func (ls *LearningService) updatePattern(pattern Pattern) error {
+	// Convert to database model
+	dbPattern := &models.Pattern{
+		Name:            pattern.Name,
+		Description:     pattern.Description,
+		ErrorKeywords:   models.JSONB{"keywords": pattern.ErrorKeywords},
+		RootCause:       pattern.RootCause,
+		CommonFixes:     models.JSONB{"fixes": pattern.CommonFixes},
+		Severity:        pattern.Severity,
+		OccurrenceCount: pattern.OccurrenceCount,
+		LastSeen:        pattern.LastSeen,
+		Confidence:      pattern.Confidence,
+		Metadata:        models.JSONB(pattern.Metadata),
+	}
+
 	// Check if pattern already exists
-	var existingPattern Pattern
+	var existingPattern models.Pattern
 	err := ls.db.Where("name = ?", pattern.Name).First(&existingPattern).Error
 
 	if err == gorm.ErrRecordNotFound {
 		// Create new pattern
-		return ls.db.Create(&pattern).Error
+		return ls.db.Create(dbPattern).Error
 	} else if err != nil {
 		return fmt.Errorf("failed to check existing pattern: %w", err)
 	}
@@ -482,12 +496,21 @@ func (ls *LearningService) updatePattern(pattern Pattern) error {
 	existingPattern.LastSeen = time.Now()
 	existingPattern.Confidence = math.Min(existingPattern.Confidence+0.1, 1.0) // Increase confidence
 
-	// Add new example
-	existingPattern.Examples = append(existingPattern.Examples, pattern.Examples...)
-
 	// Update common fixes if new ones are provided
 	if len(pattern.CommonFixes) > 0 {
-		existingPattern.CommonFixes = append(existingPattern.CommonFixes, pattern.CommonFixes...)
+		// Merge fixes
+		var existingFixes []string
+		if existingPattern.CommonFixes != nil {
+			if fixes, ok := existingPattern.CommonFixes["fixes"].([]interface{}); ok {
+				for _, fix := range fixes {
+					if fixStr, ok := fix.(string); ok {
+						existingFixes = append(existingFixes, fixStr)
+					}
+				}
+			}
+		}
+		existingFixes = append(existingFixes, pattern.CommonFixes...)
+		existingPattern.CommonFixes = models.JSONB{"fixes": existingFixes}
 	}
 
 	return ls.db.Save(&existingPattern).Error
@@ -619,22 +642,110 @@ func (ls *LearningService) GetLearningMetrics() (*LearningMetrics, error) {
 
 // GetPatterns returns all learned patterns
 func (ls *LearningService) GetPatterns() ([]Pattern, error) {
+	var dbPatterns []models.Pattern
+	err := ls.db.Find(&dbPatterns).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to service pattern format
 	var patterns []Pattern
-	err := ls.db.Find(&patterns).Error
-	return patterns, err
+	for _, dbPattern := range dbPatterns {
+		pattern := Pattern{
+			ID:              dbPattern.ID,
+			Name:            dbPattern.Name,
+			Description:     dbPattern.Description,
+			RootCause:       dbPattern.RootCause,
+			Severity:        dbPattern.Severity,
+			OccurrenceCount: dbPattern.OccurrenceCount,
+			LastSeen:        dbPattern.LastSeen,
+			Confidence:      dbPattern.Confidence,
+		}
+
+		// Extract keywords from JSONB
+		if dbPattern.ErrorKeywords != nil {
+			if keywords, ok := dbPattern.ErrorKeywords["keywords"].([]interface{}); ok {
+				for _, keyword := range keywords {
+					if keywordStr, ok := keyword.(string); ok {
+						pattern.ErrorKeywords = append(pattern.ErrorKeywords, keywordStr)
+					}
+				}
+			}
+		}
+
+		// Extract fixes from JSONB
+		if dbPattern.CommonFixes != nil {
+			if fixes, ok := dbPattern.CommonFixes["fixes"].([]interface{}); ok {
+				for _, fix := range fixes {
+					if fixStr, ok := fix.(string); ok {
+						pattern.CommonFixes = append(pattern.CommonFixes, fixStr)
+					}
+				}
+			}
+		}
+
+		// Extract metadata
+		if dbPattern.Metadata != nil {
+			pattern.Metadata = map[string]interface{}(dbPattern.Metadata)
+		}
+
+		patterns = append(patterns, pattern)
+	}
+
+	return patterns, nil
 }
 
 // GetPatternByID returns a specific pattern by ID
 func (ls *LearningService) GetPatternByID(patternID uint) (*Pattern, error) {
-	var pattern Pattern
-	err := ls.db.First(&pattern, patternID).Error
+	var dbPattern models.Pattern
+	err := ls.db.First(&dbPattern, patternID).Error
 	if err != nil {
 		return nil, err
 	}
+
+	// Convert to service pattern format
+	pattern := Pattern{
+		ID:              dbPattern.ID,
+		Name:            dbPattern.Name,
+		Description:     dbPattern.Description,
+		RootCause:       dbPattern.RootCause,
+		Severity:        dbPattern.Severity,
+		OccurrenceCount: dbPattern.OccurrenceCount,
+		LastSeen:        dbPattern.LastSeen,
+		Confidence:      dbPattern.Confidence,
+	}
+
+	// Extract keywords from JSONB
+	if dbPattern.ErrorKeywords != nil {
+		if keywords, ok := dbPattern.ErrorKeywords["keywords"].([]interface{}); ok {
+			for _, keyword := range keywords {
+				if keywordStr, ok := keyword.(string); ok {
+					pattern.ErrorKeywords = append(pattern.ErrorKeywords, keywordStr)
+				}
+			}
+		}
+	}
+
+	// Extract fixes from JSONB
+	if dbPattern.CommonFixes != nil {
+		if fixes, ok := dbPattern.CommonFixes["fixes"].([]interface{}); ok {
+			for _, fix := range fixes {
+				if fixStr, ok := fix.(string); ok {
+					pattern.CommonFixes = append(pattern.CommonFixes, fixStr)
+				}
+			}
+		}
+	}
+
+	// Extract metadata
+	if dbPattern.Metadata != nil {
+		pattern.Metadata = map[string]interface{}(dbPattern.Metadata)
+	}
+
 	return &pattern, nil
 }
 
 // DeletePattern deletes a pattern
 func (ls *LearningService) DeletePattern(patternID uint) error {
-	return ls.db.Delete(&Pattern{}, patternID).Error
+	return ls.db.Delete(&models.Pattern{}, patternID).Error
 }
