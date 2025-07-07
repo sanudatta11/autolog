@@ -472,7 +472,6 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var mu sync.Mutex // For any shared state (currently only logger and results/errs slices, which are safe by index)
 	for i, chunk := range chunks {
 		wg.Add(1)
 		go func(idx int, chunk []models.LogEntry) {

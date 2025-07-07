@@ -4,7 +4,7 @@ An advanced log analysis platform using LLM for Root Cause Analysis (RCA) and mu
 
 ## 🚀 Features
 
-- **Proactive AI-Driven Monitoring**: Autogenerates alerts before failures—no custom monitors needed
+- **Proactive AI-Driven Monitoring**: Autogenerates alerts before failures no custom monitors needed
 - **LLM-Powered Root Cause Analysis**: Automated, developer-friendly RCA with instant preliminary findings
 - **Code-Aware Fix Suggestions**: (Optional) Auto-generates PRs for common issues before a dev even logs in
 - **Multi-Source Log Integration**: Connect to CloudWatch, Splunk, and more
