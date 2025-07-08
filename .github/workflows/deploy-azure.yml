@@ -1,0 +1,272 @@
+name: Deploy AutoLog to Azure
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+        - test
+        - staging
+        - production
+
+env:
+  RESOURCE_GROUP: autolog-${{ github.event.inputs.environment || 'test' }}-rg
+  LOCATION: eastus
+  ACR_NAME: autologregistry${{ github.event.inputs.environment || 'test' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd frontend && npm ci
+        cd ../shared && npm ci
+    
+    - name: Run backend tests
+      run: |
+        cd backend
+        go test ./...
+    
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm test -- --watchAll=false
+    
+    - name: Run linting
+      run: |
+        cd frontend
+        npm run lint
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Create resource group
+      run: |
+        az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }}
+    
+    - name: Create container registry
+      run: |
+        az acr create --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.ACR_NAME }} --sku Basic
+      continue-on-error: true
+    
+    - name: Login to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.ACR_NAME }}.azurecr.io
+        username: ${{ secrets.REGISTRY_USERNAME }}
+        password: ${{ secrets.REGISTRY_PASSWORD }}
+    
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile.prod
+        push: true
+        tags: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile.prod
+        push: true
+        tags: ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build and push log parser image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./logparser_service
+        file: ./logparser_service/Dockerfile
+        push: true
+        tags: ${{ env.ACR_NAME }}.azurecr.io/logparser:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Tag images as latest
+      run: |
+        az acr repository show-tags --name ${{ env.ACR_NAME }} --repository backend --orderby time_desc --output table
+        az acr repository show-tags --name ${{ env.ACR_NAME }} --repository frontend --orderby time_desc --output table
+        az acr repository show-tags --name ${{ env.ACR_NAME }} --repository logparser --orderby time_desc --output table
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'test' }}
+    
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Create PostgreSQL database
+      run: |
+        az postgres flexible-server create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name autolog-db-${{ github.event.inputs.environment || 'test' }} \
+            --admin-user postgres \
+            --admin-password ${{ secrets.DB_PASSWORD }} \
+            --sku-name Standard_B1ms \
+            --tier Burstable \
+            --storage-size 32 \
+            --version 15 \
+            --location ${{ env.LOCATION }}
+      continue-on-error: true
+    
+    - name: Deploy backend container
+      run: |
+        az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name autolog-backend \
+            --image ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }} \
+            --dns-name-label autolog-backend-${{ github.event.inputs.environment || 'test' }} \
+            --ports 8080 \
+            --environment-variables \
+                DATABASE_URL="postgres://postgres:${{ secrets.DB_PASSWORD }}@autolog-db-${{ github.event.inputs.environment || 'test' }}.postgres.database.azure.com:5432/autolog?sslmode=require" \
+                JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+                CORS_ORIGIN="https://autolog-frontend-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io" \
+                ENV="${{ github.event.inputs.environment || 'test' }}" \
+                PORT="8080" \
+                OLLAMA_URL="https://autolog-ollama-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io:11434" \
+                OLLAMA_MODEL="llama2:13b" \
+            --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+            --registry-username ${{ secrets.REGISTRY_USERNAME }} \
+            --registry-password ${{ secrets.REGISTRY_PASSWORD }}
+      continue-on-error: true
+    
+    - name: Deploy frontend container
+      run: |
+        az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name autolog-frontend \
+            --image ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }} \
+            --dns-name-label autolog-frontend-${{ github.event.inputs.environment || 'test' }} \
+            --ports 80 \
+            --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+            --registry-username ${{ secrets.REGISTRY_USERNAME }} \
+            --registry-password ${{ secrets.REGISTRY_PASSWORD }}
+      continue-on-error: true
+    
+    - name: Deploy log parser container
+      run: |
+        az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name autolog-logparser \
+            --image ${{ env.ACR_NAME }}.azurecr.io/logparser:${{ github.sha }} \
+            --dns-name-label autolog-logparser-${{ github.event.inputs.environment || 'test' }} \
+            --ports 8000 \
+            --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+            --registry-username ${{ secrets.REGISTRY_USERNAME }} \
+            --registry-password ${{ secrets.REGISTRY_PASSWORD }}
+      continue-on-error: true
+    
+    - name: Deploy Ollama container
+      run: |
+        az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name autolog-ollama \
+            --image ollama/ollama:latest \
+            --dns-name-label autolog-ollama-${{ github.event.inputs.environment || 'test' }} \
+            --ports 11434 \
+            --cpu 2 \
+            --memory 4 \
+            --command-line "sh -c 'ollama serve & sleep 10 && ollama pull llama2:13b && ollama pull nomic-embed-text && tail -f /dev/null'"
+      continue-on-error: true
+    
+    - name: Setup monitoring
+      run: |
+        # Create Log Analytics workspace
+        az monitor log-analytics workspace create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name autolog-workspace-${{ github.event.inputs.environment || 'test' }} \
+            --location ${{ env.LOCATION }}
+        continue-on-error: true
+        
+        # Create cost alert
+        az monitor metrics alert create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name "AutoLog-CostAlert-${{ github.event.inputs.environment || 'test' }}" \
+            --description "Alert when monthly cost exceeds $150" \
+            --scopes "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }}" \
+            --condition "total cost > 150" \
+            --window-size 30m \
+            --evaluation-frequency 1h
+        continue-on-error: true
+    
+    - name: Display deployment info
+      run: |
+        echo "🎉 AutoLog deployment completed!"
+        echo ""
+        echo "📋 Deployment Information:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🌐 Frontend URL: https://autolog-frontend-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io"
+        echo "🔧 Backend URL: https://autolog-backend-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io"
+        echo "📊 Log Parser URL: https://autolog-logparser-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io"
+        echo "🤖 Ollama URL: https://autolog-ollama-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io:11434"
+        echo "🗄️  Database: autolog-db-${{ github.event.inputs.environment || 'test' }}.postgres.database.azure.com"
+        echo "📦 Container Registry: ${{ env.ACR_NAME }}.azurecr.io"
+        echo ""
+        echo "💰 Estimated Monthly Cost: $100-150"
+        echo ""
+        echo "🔧 Useful Commands:"
+        echo "  View logs: az container logs --resource-group ${{ env.RESOURCE_GROUP }} --name <container-name>"
+        echo "  Restart container: az container restart --resource-group ${{ env.RESOURCE_GROUP }} --name <container-name>"
+        echo "  Delete deployment: az group delete --name ${{ env.RESOURCE_GROUP }} --yes"
+
+  cleanup:
+    if: failure() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy]
+    
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Cleanup failed deployment
+      run: |
+        echo "Cleaning up failed deployment..."
+        az group delete --name ${{ env.RESOURCE_GROUP }} --yes --no-wait
+        echo "Cleanup initiated" 

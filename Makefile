@@ -179,3 +179,9 @@ docker-clean: ## Clean up Docker containers, images, and volumes
 	@echo "🧹 Cleaning up Docker resources..."
 	@docker-compose down -v --rmi all
 	@docker system prune -f 
+
+deploy:
+	@echo "🚀 Deploying AutoLog to Azure..."
+	@cd terraform && \
+		./deploy.sh deploy || \
+		(echo "❌ Deployment failed. Check the error messages above." && exit 1)

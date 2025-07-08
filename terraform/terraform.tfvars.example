@@ -1,0 +1,70 @@
+# AutoLog Terraform Variables - High-End Deployment Configuration
+# Copy this file to terraform.tfvars and update the values
+
+# Environment Configuration
+environment = "prod"  # Options: dev, staging, prod
+location = "eastus"   # Azure region
+resource_group_name = "autolog-rg"
+
+# Database Configuration
+db_password = "your-secure-db-password"
+db_sku_name = "GP_Standard_D4s_v3"  # Production tier
+db_storage_mb = 131072  # 128GB for production
+db_version = "15"
+
+# Security Configuration
+jwt_secret = "your-jwt-secret-key"
+enable_key_vault = true
+enable_monitoring = true
+
+# Container Registry Configuration
+use_azure_registry = true  # Use Azure Container Registry for production
+docker_hub_username = "your-dockerhub-username"
+container_registry_url = "docker.io/your-dockerhub-username"
+
+# Container App Configuration
+backend_cpu = 2.0
+backend_memory = "4Gi"
+logparser_cpu = 2.0
+logparser_memory = "4Gi"
+ollama_cpu = 4.0
+ollama_memory = "8Gi"
+
+# Application Configuration
+log_level = "info"
+ollama_model = "llama2:13b"
+ollama_embed_model = "nomic-embed-text:latest"
+
+# Port Configuration
+backend_port = 8080
+logparser_port = 5000
+ollama_port = 11434
+
+# Scaling Configuration
+enable_auto_scaling = true
+min_replicas = 1
+max_replicas = 10
+
+# Storage Configuration
+ollama_storage_gb = 100
+
+# Network Configuration
+enable_private_networking = false
+
+# Cost Optimization
+use_spot_instances = false  # Not recommended for production
+
+# Backup Configuration
+enable_backup = true
+backup_retention_days = 30
+
+# Production Environment Features:
+# - High availability database with zone redundancy
+# - Premium Azure Container Registry
+# - Application Insights and Log Analytics monitoring
+# - Azure Key Vault for secret management
+# - Auto-scaling with CPU and HTTP-based rules
+# - ZRS storage replication for high availability
+# - Extended backup retention (30 days)
+# - Production-grade resource sizing
+# - Estimated cost: $440-1010/month 

@@ -1,0 +1,168 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  RESOURCE_GROUP: autolog-test-rg
+  LOCATION: eastus
+  ACR_NAME: autologregistry
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm test --if-present
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+    
+    - name: Test backend
+      run: |
+        cd backend
+        go test ./...
+    
+    - name: Build backend
+      run: |
+        cd backend
+        go build -o bin/server cmd/server/main.go
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Set up Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.ACR_NAME }}.azurecr.io
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+    
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile.prod
+        push: true
+        tags: ${{ env.ACR_NAME }}.azurecr.io/autolog-backend:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile.prod
+        push: true
+        tags: ${{ env.ACR_NAME }}.azurecr.io/autolog-frontend:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build and push logparser image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./logparser_service
+        push: true
+        tags: ${{ env.ACR_NAME }}.azurecr.io/autolog-logparser:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Deploy to Azure Container Instances
+      run: |
+        # Update backend container
+        az container create \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name autolog-backend \
+          --image ${{ env.ACR_NAME }}.azurecr.io/autolog-backend:${{ github.sha }} \
+          --dns-name-label autolog-backend-test \
+          --ports 8080 \
+          --environment-variables \
+            DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            CORS_ORIGIN="${{ secrets.CORS_ORIGIN }}" \
+            ENV="production" \
+            PORT="8080" \
+            OLLAMA_URL="${{ secrets.OLLAMA_URL }}" \
+            OLLAMA_MODEL="llama2:13b" \
+          --cpu 1 \
+          --memory 2 \
+          --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+          --registry-username ${{ secrets.ACR_USERNAME }} \
+          --registry-password "${{ secrets.ACR_PASSWORD }}" \
+          --restart-policy Always \
+          --force-restart
+        
+        # Update logparser container
+        az container create \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name autolog-logparser \
+          --image ${{ env.ACR_NAME }}.azurecr.io/autolog-logparser:${{ github.sha }} \
+          --dns-name-label autolog-logparser-test \
+          --ports 8000 \
+          --cpu 1 \
+          --memory 1 \
+          --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+          --registry-username ${{ secrets.ACR_USERNAME }} \
+          --registry-password "${{ secrets.ACR_PASSWORD }}" \
+          --restart-policy Always \
+          --force-restart
+    
+    - name: Deploy to Azure Static Web Apps
+      uses: Azure/static-web-apps-deploy@v1
+      with:
+        azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        action: "upload"
+        app_location: "frontend"
+        output_location: "dist"
+        skip_app_build: true
+    
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ ${{ job.status }} == 'success' ]; then
+          echo "✅ Deployment successful!"
+          echo "🌐 Backend: https://autolog-backend-test.eastus.azurecontainer.io:8080"
+          echo "🌐 Log Parser: https://autolog-logparser-test.eastus.azurecontainer.io:8000"
+        else
+          echo "❌ Deployment failed!"
+        fi 
