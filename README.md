@@ -103,9 +103,74 @@ autolog/
 
 ## 🚀 Deployment
 
-For deployment to Azure (test environment), see [DEPLOYMENT.md](./DEPLOYMENT.md).
+### Azure Static Web Apps (SWA) Deployment
 
-**Quick deployment:**
+For quick frontend deployment using Azure Static Web Apps:
+
+#### Prerequisites
+- Azure CLI installed and authenticated
+- Azure Static Web Apps CLI installed: `npm install -g @azure/static-web-apps-cli`
+
+#### Quick SWA Deployment
+
+1. **Install SWA CLI globally**
+   ```bash
+   npm install -g @azure/static-web-apps-cli
+   ```
+
+2. **Navigate to frontend directory**
+   ```bash
+   cd frontend
+   ```
+
+3. **Login to Azure (if not already logged in)**
+   ```bash
+   az login
+   ```
+
+4. **Deploy to Azure Static Web Apps**
+   ```bash
+   # Build and deploy
+   swa build
+   
+   # Or deploy directly (builds automatically)
+   swa deploy
+   ```
+
+5. **For development with SWA**
+   ```bash
+   # Start local development server with SWA
+   swa start
+   ```
+
+#### SWA Configuration
+
+The project includes a `swa-cli.config.json` file configured for:
+- **App Location**: `frontend` directory
+- **Output Location**: `dist` (Vite build output)
+- **Build Command**: `npm run build`
+- **Dev Server**: `npm run dev` on port 5173
+
+#### Troubleshooting SWA Issues
+
+If you encounter shell execution errors (common in WSL2):
+```bash
+# Create a build script wrapper
+echo '#!/bin/bash
+cd "$(dirname "$0")"
+npm run build' > frontend/build.sh
+
+chmod +x frontend/build.sh
+
+# Update swa-cli.config.json to use the script
+# "appBuildCommand": "./build.sh"
+```
+
+### Full Azure Infrastructure Deployment
+
+For complete infrastructure deployment (backend, database, etc.), see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+**Quick Terraform deployment:**
 ```bash
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
@@ -113,7 +178,9 @@ cp terraform.tfvars.example terraform.tfvars
 ./deploy.sh deploy
 ```
 
-**Estimated cost**: $40-75/month for test environment
+**Estimated costs:**
+- **SWA Frontend Only**: $0-20/month (free tier available)
+- **Full Infrastructure**: $40-75/month for test environment
 
 ## 🧠 Enhanced ML Log Parser
 
