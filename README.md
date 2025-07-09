@@ -153,8 +153,8 @@ AutoLog uses a **phased deployment system** that uses Terraform targeting to dep
    - Supports both Azure ACR and Docker Hub
 
 3. **Phase 3**: Deploy Ollama Container Service
-   - Builds custom Ollama container image with pre-downloaded models
-   - Pushes Ollama image to container registry
+   - Deploys Ollama using the public `ollama/ollama:latest` image
+   - Configures automatic model downloads on startup
    - Deploys Ollama as a container service with proper model management
 
 4. **Phase 4**: Deploy Custom Applications

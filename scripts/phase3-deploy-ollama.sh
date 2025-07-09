@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AutoLog Phase 3: Deploy Ollama Container Service
-# This script builds a custom Ollama image and deploys it as a container service
+# This script deploys Ollama using the public image as a container service
 
 set -e
 
@@ -36,26 +36,14 @@ print_error() {
 # Load environment variables
 print_status "Loading environment configuration..."
 
-# Source terraform outputs to get registry info
+# Check if Terraform state exists
 cd terraform
 if [ ! -f "terraform.tfstate" ]; then
     print_error "Terraform state not found. Please run Phase 1 first."
     exit 1
 fi
 
-# Get registry information from Terraform outputs
-REGISTRY_URL=$(terraform output -raw container_registry_login_server 2>/dev/null || echo "")
-REGISTRY_USERNAME=$(terraform output -raw container_registry_username 2>/dev/null || echo "")
-REGISTRY_PASSWORD=$(terraform output -raw container_registry_password 2>/dev/null || echo "")
-
-if [ -z "$REGISTRY_URL" ]; then
-    print_error "Container registry information not found. Please run Phase 1 first."
-    exit 1
-fi
-
 cd ..
-
-print_success "Registry URL: $REGISTRY_URL"
 
 # Load variables from terraform.tfvars
 ENVIRONMENT=$(grep 'environment' terraform/terraform.tfvars | cut -d'"' -f2 || echo "dev")
@@ -66,84 +54,7 @@ print_status "Environment: $ENVIRONMENT"
 print_status "Ollama Model: $OLLAMA_MODEL"
 print_status "Ollama Embed Model: $OLLAMA_EMBED_MODEL"
 
-# Create temporary directory for Ollama build
-TEMP_DIR=$(mktemp -d)
-print_status "Created temporary directory: $TEMP_DIR"
-
-# Create Dockerfile for custom Ollama image
-print_status "Creating custom Ollama Dockerfile..."
-
-cat > "$TEMP_DIR/Dockerfile" << EOF
-# Use official Ollama image as base
-FROM ollama/ollama:latest
-
-# Set environment variables
-ENV OLLAMA_HOST=0.0.0.0
-ENV OLLAMA_ORIGINS=*
-
-# Create startup script
-RUN echo '#!/bin/bash' > /startup.sh && \\
-    echo 'ollama serve &' >> /startup.sh && \\
-    echo 'sleep 10' >> /startup.sh && \\
-    echo 'ollama pull $OLLAMA_MODEL' >> /startup.sh && \\
-    echo 'ollama pull $OLLAMA_EMBED_MODEL' >> /startup.sh && \\
-    echo 'wait' >> /startup.sh && \\
-    chmod +x /startup.sh
-
-# Expose port
-EXPOSE 11434
-
-# Use custom startup script
-CMD ["/startup.sh"]
-EOF
-
-print_success "Created Dockerfile"
-
-# Build custom Ollama image
-print_status "Building custom Ollama image..."
-
-IMAGE_NAME="autolog-ollama"
-IMAGE_TAG="latest"
-FULL_IMAGE_NAME="$REGISTRY_URL/$IMAGE_NAME:$IMAGE_TAG"
-
-cd "$TEMP_DIR"
-docker build -t "$FULL_IMAGE_NAME" .
-
-if [ $? -ne 0 ]; then
-    print_error "Failed to build Ollama image"
-    exit 1
-fi
-
-print_success "Built Ollama image: $FULL_IMAGE_NAME"
-
-# Login to container registry
-print_status "Logging into container registry..."
-
-echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" -u "$REGISTRY_USERNAME" --password-stdin
-
-if [ $? -ne 0 ]; then
-    print_error "Failed to login to container registry"
-    exit 1
-fi
-
-print_success "Logged into container registry"
-
-# Push image to registry
-print_status "Pushing Ollama image to registry..."
-
-docker push "$FULL_IMAGE_NAME"
-
-if [ $? -ne 0 ]; then
-    print_error "Failed to push Ollama image"
-    exit 1
-fi
-
-print_success "Pushed Ollama image to registry"
-
-# Clean up temporary directory
-cd ..
-rm -rf "$TEMP_DIR"
-print_status "Cleaned up temporary directory"
+print_status "Using public Ollama image: ollama/ollama:latest"
 
 # Deploy Ollama using Terraform
 print_status "Deploying Ollama container service..."
@@ -160,10 +71,10 @@ fi
 print_status "Applying Terraform for Ollama deployment..."
 
 # Create a temporary terraform configuration for Ollama
-cat > "ollama.tf" << EOF
-# Ollama Container App - Custom Image
+cat > "ollama.tf" << 'EOF'
+# Ollama Container App - Public Image
 resource "azurerm_container_app" "ollama" {
-  name                         = "autolog-${ENVIRONMENT}-ollama"
+  name                         = "autolog-${var.environment}-ollama"
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
@@ -175,7 +86,7 @@ resource "azurerm_container_app" "ollama" {
   template {
     container {
       name   = "ollama"
-      image  = "$FULL_IMAGE_NAME"
+      image  = "ollama/ollama:latest"
       cpu    = var.ollama_cpu
       memory = var.ollama_memory
 
@@ -184,10 +95,11 @@ resource "azurerm_container_app" "ollama" {
         value = "0.0.0.0"
       }
       
-      env {
-        name  = "OLLAMA_ORIGINS"
-        value = "*"
-      }
+      # Add startup command to download models
+      command = ["/bin/sh", "-c"]
+      args = [
+        "ollama serve & sleep 10 && ollama pull ${var.ollama_model} && ollama pull ${var.ollama_embed_model} && wait"
+      ]
     }
   }
 
@@ -201,18 +113,10 @@ resource "azurerm_container_app" "ollama" {
     }
   }
 }
-
-# Role assignment for ACR access
-resource "azurerm_role_assignment" "acr_pull_ollama" {
-  scope                = azurerm_container_registry.main.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.ollama.identity[0].principal_id
-  depends_on           = [azurerm_container_app.ollama]
-}
 EOF
 
 # Apply the Ollama configuration
-terraform apply -auto-approve -target=azurerm_container_app.ollama -target=azurerm_role_assignment.acr_pull_ollama
+terraform apply -auto-approve -target=azurerm_container_app.ollama
 
 if [ $? -ne 0 ]; then
     print_error "Failed to deploy Ollama container app"
@@ -240,4 +144,5 @@ print_status "Next steps:"
 echo "  - Run Phase 4 to deploy custom applications"
 echo "  - Ollama models are being downloaded in the background"
 echo "  - You can check model status at: $OLLAMA_URL/api/tags"
+echo "  - Models being downloaded: $OLLAMA_MODEL, $OLLAMA_EMBED_MODEL"
 echo "" 
