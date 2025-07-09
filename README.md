@@ -103,84 +103,107 @@ autolog/
 
 ## 🚀 Deployment
 
-### Azure Static Web Apps (SWA) Deployment
+### Phased Deployment System
 
-For quick frontend deployment using Azure Static Web Apps:
+AutoLog uses a **phased deployment system** that uses Terraform targeting to deploy infrastructure in logical phases, preventing failures and ensuring proper resource dependencies. The system uses a unified `main.tf` configuration with targeted deployments.
+
+#### Quick Start
+
+**Full deployment (all phases):**
+```bash
+./scripts/deploy-phased.sh
+```
+
+**Phase-by-phase deployment:**
+```bash
+# Phase 1: Container Registry Infrastructure
+./scripts/deploy-phased.sh --phase 1
+
+# Phase 2: Build and Push Docker Images  
+./scripts/deploy-phased.sh --phase 2
+
+# Phase 3: Main Infrastructure (Database, Container Apps)
+./scripts/deploy-phased.sh --phase 3
+
+# Phase 4: Frontend Deployment (SWA)
+./scripts/deploy-phased.sh --phase 4
+```
+
+**Skip specific phases:**
+```bash
+# Skip image building (if already done)
+./scripts/deploy-phased.sh --skip-phase 2
+```
+
+#### Deployment Phases
+
+1. **Phase 1**: Container Registry Infrastructure
+   - Creates Azure Container Registry or prepares for Docker Hub
+   - Sets up resource group and basic infrastructure
+
+2. **Phase 2**: Build and Push Docker Images
+   - Builds backend and logparser Docker images
+   - Pushes images to the configured registry
+   - Supports both Azure ACR and Docker Hub
+
+3. **Phase 3**: Main Infrastructure
+   - Deploys PostgreSQL database
+   - Creates Container Apps Environment
+   - Deploys backend, logparser, and Ollama container apps
+   - Configures environment variables and networking
+
+4. **Phase 4**: Frontend Deployment
+   - Builds React frontend with Vite
+   - Deploys to Azure Static Web Apps
+   - Configures API routing to backend
 
 #### Prerequisites
-- Azure CLI installed and authenticated
-- Azure Static Web Apps CLI installed: `npm install -g @azure/static-web-apps-cli`
 
-#### Quick SWA Deployment
+- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed and authenticated
+- [Terraform](https://www.terraform.io/downloads) installed
+- [Docker](https://docs.docker.com/get-docker/) installed and running
+- [SWA CLI](https://docs.microsoft.com/en-us/azure/static-web-apps/cli/get-started) installed
 
-1. **Install SWA CLI globally**
-   ```bash
-   npm install -g @azure/static-web-apps-cli
-   ```
+#### Configuration
 
-2. **Navigate to frontend directory**
-   ```bash
-   cd frontend
-   ```
+Edit `terraform/terraform.tfvars`:
+```hcl
+# Environment Configuration
+environment = "dev"
+location = "centralus"
+resource_group_name = "autolog-rg"
 
-3. **Login to Azure (if not already logged in)**
-   ```bash
-   az login
-   ```
+# Database Configuration
+db_password = "your-secure-password"
+jwt_secret = "your-jwt-secret-key"
 
-4. **Deploy to Azure Static Web Apps**
-   ```bash
-   # Build and deploy
-   swa build
-   
-   # Or deploy directly (builds automatically)
-   swa deploy
-   ```
-
-5. **For development with SWA**
-   ```bash
-   # Start local development server with SWA
-   swa start
-   ```
-
-#### SWA Configuration
-
-The project includes a `swa-cli.config.json` file configured for:
-- **App Location**: `frontend` directory
-- **Output Location**: `dist` (Vite build output)
-- **Build Command**: `npm run build`
-- **Dev Server**: `npm run dev` on port 5173
-
-#### Troubleshooting SWA Issues
-
-If you encounter shell execution errors (common in WSL2):
-```bash
-# Create a build script wrapper
-echo '#!/bin/bash
-cd "$(dirname "$0")"
-npm run build' > frontend/build.sh
-
-chmod +x frontend/build.sh
-
-# Update swa-cli.config.json to use the script
-# "appBuildCommand": "./build.sh"
+# Registry Configuration
+container_registry_url = "your-acr-url"
 ```
 
-### Full Azure Infrastructure Deployment
-
-For complete infrastructure deployment (backend, database, etc.), see [DEPLOYMENT.md](./DEPLOYMENT.md).
-
-**Quick Terraform deployment:**
+For Docker Hub authentication:
 ```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
-./deploy.sh deploy
+export DOCKER_USERNAME="your-dockerhub-username"
+export DOCKER_PASSWORD="your-dockerhub-password"
 ```
+
+#### Cost Optimization
+
+The phased deployment includes cost optimizations:
+- **Spot Instances**: Container Apps use spot instances (60-90% cost reduction)
+- **Basic Database Tier**: Uses B_Standard_B1ms for development
+- **Minimal Resources**: Container Apps use minimal CPU (0.5) and memory (1Gi)
 
 **Estimated costs:**
-- **SWA Frontend Only**: $0-20/month (free tier available)
 - **Full Infrastructure**: $40-75/month for test environment
+- **SWA Frontend Only**: $0-20/month (free tier available)
+
+#### Documentation
+
+For detailed deployment information, see:
+- [Phased Deployment Guide](./docs/PHASED-DEPLOYMENT.md)
+- [Full Deployment Guide](./DEPLOYMENT.md)
+- [SWA Deployment Guide](./docs/SWA-DEPLOYMENT.md)
 
 ## 🧠 Enhanced ML Log Parser
 

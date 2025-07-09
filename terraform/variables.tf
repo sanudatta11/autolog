@@ -67,25 +67,6 @@ variable "enable_monitoring" {
   default     = true
 }
 
-# Container Registry Configuration
-variable "use_azure_registry" {
-  description = "Whether to use Azure Container Registry (false = use Docker Hub)"
-  type        = bool
-  default     = true
-}
-
-variable "docker_hub_username" {
-  description = "Docker Hub username for image repository"
-  type        = string
-  default     = "autolog"
-}
-
-variable "container_registry_url" {
-  description = "Container registry URL (e.g., docker.io/username or acr.azurecr.io)"
-  type        = string
-  default     = "docker.io/autolog"
-}
-
 # Container App Configuration
 variable "backend_cpu" {
   description = "Backend container CPU allocation"

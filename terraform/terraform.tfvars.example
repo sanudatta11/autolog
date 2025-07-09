@@ -17,11 +17,6 @@ jwt_secret = "your-jwt-secret-key"
 enable_key_vault = true
 enable_monitoring = true
 
-# Container Registry Configuration
-use_azure_registry = true  # Use Azure Container Registry for production
-docker_hub_username = "your-dockerhub-username"
-container_registry_url = "docker.io/your-dockerhub-username"
-
 # Container App Configuration
 backend_cpu = 2.0
 backend_memory = "4Gi"

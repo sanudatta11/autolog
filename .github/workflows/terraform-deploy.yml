@@ -23,11 +23,6 @@ on:
         - plan
         - apply
         - destroy
-      use_azure_registry:
-        description: 'Use Azure Container Registry (false = use Docker Hub)'
-        required: false
-        default: false
-        type: boolean
 
 env:
   TF_VERSION: "1.5.0"
@@ -85,25 +80,14 @@ jobs:
     - name: Determine registry configuration
       id: registry
       run: |
-        USE_AZURE_REGISTRY="${{ github.event.inputs.use_azure_registry || 'false' }}"
-        DOCKER_HUB_USERNAME="${{ secrets.DOCKER_HUB_USERNAME || 'autolog' }}"
-        
-        if [ "$USE_AZURE_REGISTRY" = "true" ]; then
-          # Use Azure Container Registry
-          ACR_NAME="autologregistrytest"
-          REGISTRY_URL="$ACR_NAME.azurecr.io"
-          echo "registry_type=azure" >> $GITHUB_OUTPUT
-          echo "registry_url=$REGISTRY_URL" >> $GITHUB_OUTPUT
-          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
-        else
-          # Use Docker Hub
-          REGISTRY_URL="docker.io/$DOCKER_HUB_USERNAME"
-          echo "registry_type=dockerhub" >> $GITHUB_OUTPUT
-          echo "registry_url=$REGISTRY_URL" >> $GITHUB_OUTPUT
-        fi
+        # Use Azure Container Registry
+        ACR_NAME="autologregistrytest"
+        REGISTRY_URL="$ACR_NAME.azurecr.io"
+        echo "registry_type=azure" >> $GITHUB_OUTPUT
+        echo "registry_url=$REGISTRY_URL" >> $GITHUB_OUTPUT
+        echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
     
     - name: Login to Azure (if using ACR)
-      if: steps.registry.outputs.registry_type == 'azure'
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -127,13 +111,6 @@ jobs:
         login-server: ${{ steps.registry.outputs.registry_url }}
         username: ${{ steps.acr.outputs.acr_username }}
         password: ${{ steps.acr.outputs.acr_password }}
-    
-    - name: Login to Docker Hub (if using Docker Hub)
-      if: steps.registry.outputs.registry_type == 'dockerhub'
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_HUB_USERNAME }}
-        password: ${{ secrets.DOCKER_HUB_TOKEN }}
     
     - name: Build and push backend image
       uses: docker/build-push-action@v5
@@ -234,7 +211,7 @@ jobs:
           -var="environment=test" \
           -var="db_password=${{ secrets.DB_PASSWORD }}" \
           -var="jwt_secret=${{ secrets.JWT_SECRET }}" \
-          -var="use_azure_registry=${{ github.event.inputs.use_azure_registry || 'false' }}" \
+          -var="use_azure_registry=true" \
           -var="container_registry_url=${{ steps.registry.outputs.registry_url }}" \
           -out=tfplan
       env:
@@ -261,7 +238,7 @@ jobs:
           -var="environment=test" \
           -var="db_password=${{ secrets.DB_PASSWORD }}" \
           -var="jwt_secret=${{ secrets.JWT_SECRET }}" \
-          -var="use_azure_registry=${{ github.event.inputs.use_azure_registry || 'false' }}" \
+          -var="use_azure_registry=true" \
           -var="container_registry_url=${{ steps.registry.outputs.registry_url }}" \
           -auto-approve
       env:

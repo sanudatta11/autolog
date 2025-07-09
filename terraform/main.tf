@@ -1,3 +1,6 @@
+# AutoLog Terraform Configuration - Phased Deployment Support
+# This configuration supports phased deployment using conditional resources
+
 terraform {
   required_version = ">= 1.0"
   required_providers {
@@ -27,8 +30,6 @@ provider "azurerm" {
     }
   }
 }
-
-# Variables are defined in variables.tf
 
 # Local values
 locals {
@@ -67,6 +68,10 @@ locals {
   revision_suffix = var.use_spot_instances ? "spot" : null
 }
 
+# =============================================================================
+# PHASE 1: Container Registry Infrastructure
+# =============================================================================
+
 # Resource Group
 resource "azurerm_resource_group" "main" {
   name     = "${var.resource_group_name}-${var.environment}"
@@ -74,9 +79,8 @@ resource "azurerm_resource_group" "main" {
   tags     = local.tags
 }
 
-# Container Registry (only when explicitly requested)
+# Container Registry (always enabled for ACR)
 resource "azurerm_container_registry" "main" {
-  count               = var.use_azure_registry ? 1 : 0
   name                = replace("${local.name_prefix}registry", "-", "")
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
@@ -84,6 +88,10 @@ resource "azurerm_container_registry" "main" {
   admin_enabled       = true
   tags                = local.tags
 }
+
+# =============================================================================
+# PHASE 3: Main Infrastructure (Database, Container Apps, etc.)
+# =============================================================================
 
 # PostgreSQL Database
 resource "azurerm_postgresql_flexible_server" "main" {
@@ -121,177 +129,66 @@ resource "azurerm_postgresql_flexible_server_database" "main" {
   charset   = "utf8"
 }
 
-# Log Analytics Workspace (when monitoring is enabled)
-resource "azurerm_log_analytics_workspace" "main" {
-  count               = var.enable_monitoring ? 1 : 0
-  name                = "${local.name_prefix}-workspace"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  sku                 = "PerGB2018"
-  retention_in_days   = local.is_production ? 90 : 30
-  tags                = local.tags
-}
-
-# Application Insights (when monitoring is enabled)
-resource "azurerm_application_insights" "main" {
-  count               = var.enable_monitoring ? 1 : 0
-  name                = "${local.name_prefix}-appinsights"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  application_type    = "web"
-  workspace_id        = var.enable_monitoring ? azurerm_log_analytics_workspace.main[0].id : null
-  tags                = local.tags
-}
-
-# Key Vault (when enabled)
-resource "azurerm_key_vault" "main" {
-  count                       = var.enable_key_vault ? 1 : 0
-  name                        = "${local.name_prefix}-kv"
-  location                    = azurerm_resource_group.main.location
-  resource_group_name         = azurerm_resource_group.main.name
-  enabled_for_disk_encryption = true
-  tenant_id                   = data.azurerm_client_config.current.tenant_id
-  soft_delete_retention_days  = local.is_production ? 90 : 7
-  purge_protection_enabled    = local.is_production
-  sku_name                    = "standard"
-  tags                        = local.tags
-}
-
-# Key Vault access policy (when enabled)
-resource "azurerm_key_vault_access_policy" "main" {
-  count        = var.enable_key_vault ? 1 : 0
-  key_vault_id = azurerm_key_vault.main[0].id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = data.azurerm_client_config.current.object_id
-  
-  key_permissions = [
-    "Get", "List", "Create", "Delete", "Update", "Import", "Backup", "Restore", "Recover"
-  ]
-  secret_permissions = [
-    "Get", "List", "Set", "Delete", "Backup", "Restore", "Recover"
-  ]
-  certificate_permissions = [
-    "Get", "List", "Create", "Delete", "Update", "Import", "Backup", "Restore", "Recover"
-  ]
-}
-
-# Store secrets in Key Vault (when enabled)
-resource "azurerm_key_vault_secret" "db_password" {
-  count        = var.enable_key_vault ? 1 : 0
-  name         = "database-password"
-  value        = var.db_password
-  key_vault_id = azurerm_key_vault.main[0].id
-}
-
-resource "azurerm_key_vault_secret" "jwt_secret" {
-  count        = var.enable_key_vault ? 1 : 0
-  name         = "jwt-secret"
-  value        = var.jwt_secret
-  key_vault_id = azurerm_key_vault.main[0].id
-}
-
 # Container Apps Environment
 resource "azurerm_container_app_environment" "main" {
   name                       = "${local.name_prefix}-env"
   location                   = azurerm_resource_group.main.location
   resource_group_name        = azurerm_resource_group.main.name
   tags                       = local.tags
-  
-  # Log Analytics integration (when monitoring is enabled)
-  log_analytics_workspace_id = var.enable_monitoring ? azurerm_log_analytics_workspace.main[0].id : null
 }
 
-# Container App Environment Storage for Ollama
-resource "azurerm_container_app_environment_storage" "ollama_storage" {
-  name                         = "ollama-models"
-  container_app_environment_id = azurerm_container_app_environment.main.id
-  account_name                 = azurerm_storage_account.ollama.name
-  access_key                   = azurerm_storage_account.ollama.primary_access_key
-  access_mode                  = "ReadWrite"
-  share_name                   = azurerm_storage_share.ollama_models.name
-}
-
-# Container App - Backend
+# Container App - Backend (using nginx by default)
 resource "azurerm_container_app" "backend" {
   name                         = "${local.name_prefix}-backend"
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = azurerm_resource_group.main.name
-  revision_mode                = var.enable_auto_scaling ? "Multiple" : "Single"
-  tags                         = local.tags
-  
-  depends_on = [
-    azurerm_container_app_environment.main,
-    azurerm_postgresql_flexible_server.main,
-    azurerm_postgresql_flexible_server_database.main,
-    azurerm_container_registry.main
-  ]
+  revision_mode                = "Single"
 
-  # Container registry configuration
-  dynamic "secret" {
-    for_each = var.use_azure_registry ? [1] : []
-    content {
-      name  = "acr-password"
-      value = azurerm_container_registry.main[0].admin_password
-    }
+  identity {
+    type = "SystemAssigned"
   }
-  
-  dynamic "registry" {
-    for_each = var.use_azure_registry ? [1] : []
-    content {
-      server                = azurerm_container_registry.main[0].login_server
-      username              = azurerm_container_registry.main[0].admin_username
-      password_secret_name  = "acr-password"
-    }
-  }
-
   template {
     container {
       name   = "backend"
-      image  = var.use_azure_registry ? "${azurerm_container_registry.main[0].login_server}/autolog-backend:latest" : "${var.container_registry_url}/autolog-backend:latest"
+      image  = "nginx:alpine"
       cpu    = local.backend_cpu
       memory = local.backend_memory
 
       env {
-        name  = "DATABASE_URL"
-        value = "postgres://postgres:${var.db_password}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/autolog?sslmode=require"
+        name  = "DB_HOST"
+        value = azurerm_postgresql_flexible_server.main.fqdn
+      }
+      env {
+        name  = "DB_PORT"
+        value = "5432"
+      }
+      env {
+        name  = "DB_NAME"
+        value = azurerm_postgresql_flexible_server_database.main.name
+      }
+      env {
+        name  = "DB_USER"
+        value = azurerm_postgresql_flexible_server.main.administrator_login
+      }
+      env {
+        name  = "DB_PASSWORD"
+        value = azurerm_postgresql_flexible_server.main.administrator_password
       }
       env {
         name  = "JWT_SECRET"
         value = var.jwt_secret
       }
       env {
-        name  = "CORS_ORIGIN"
-        value = "https://${local.name_prefix}-frontend.azurestaticapps.net"
-      }
-      env {
         name  = "ENVIRONMENT"
         value = var.environment
       }
-      env {
-        name  = "LOG_LEVEL"
-        value = local.log_level
-      }
-      env {
-        name  = "OLLAMA_URL"
-        value = "https://${azurerm_container_app.ollama.latest_revision_fqdn}"
-      }
-      env {
-        name  = "OLLAMA_MODEL"
-        value = var.ollama_model
-      }
-      env {
-        name  = "OLLAMA_EMBED_MODEL"
-        value = var.ollama_embed_model
-      }
     }
-
   }
-
-  # Auto-scaling and revision management handled by Azure Container Apps
 
   ingress {
     external_enabled = true
-    target_port     = var.backend_port
+    target_port     = 80
+    transport       = "http"
     traffic_weight {
       percentage      = 100
       latest_revision = true
@@ -299,79 +196,34 @@ resource "azurerm_container_app" "backend" {
   }
 }
 
-# Container App - Log Parser
+# Container App - Logparser (using nginx by default)
 resource "azurerm_container_app" "logparser" {
   name                         = "${local.name_prefix}-logparser"
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = azurerm_resource_group.main.name
-  revision_mode                = var.enable_auto_scaling ? "Multiple" : "Single"
-  tags                         = local.tags
-  
-  depends_on = [
-    azurerm_container_app_environment.main,
-    azurerm_postgresql_flexible_server.main,
-    azurerm_postgresql_flexible_server_database.main,
-    azurerm_container_registry.main
-  ]
+  revision_mode                = "Single"
 
-  # Container registry configuration
-  dynamic "secret" {
-    for_each = var.use_azure_registry ? [1] : []
-    content {
-      name  = "acr-password"
-      value = azurerm_container_registry.main[0].admin_password
-    }
+  identity {
+    type = "SystemAssigned"
   }
-  
-  dynamic "registry" {
-    for_each = var.use_azure_registry ? [1] : []
-    content {
-      server                = azurerm_container_registry.main[0].login_server
-      username              = azurerm_container_registry.main[0].admin_username
-      password_secret_name  = "acr-password"
-    }
-  }
-
   template {
     container {
       name   = "logparser"
-      image  = var.use_azure_registry ? "${azurerm_container_registry.main[0].login_server}/autolog-logparser:latest" : "${var.container_registry_url}/autolog-logparser:latest"
+      image  = "nginx:alpine"
       cpu    = local.logparser_cpu
       memory = local.logparser_memory
 
       env {
-        name  = "DATABASE_URL"
-        value = "postgres://postgres:${var.db_password}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/autolog?sslmode=require"
-      }
-      env {
         name  = "ENVIRONMENT"
         value = var.environment
       }
-      env {
-        name  = "LOG_LEVEL"
-        value = local.log_level
-      }
-      env {
-        name  = "OLLAMA_URL"
-        value = "https://${azurerm_container_app.ollama.latest_revision_fqdn}"
-      }
-      env {
-        name  = "OLLAMA_MODEL"
-        value = var.ollama_model
-      }
-      env {
-        name  = "OLLAMA_EMBED_MODEL"
-        value = var.ollama_embed_model
-      }
     }
-
   }
-
-  # Auto-scaling and revision management handled by Azure Container Apps
 
   ingress {
     external_enabled = true
-    target_port     = var.logparser_port
+    target_port     = 80
+    transport       = "http"
     traffic_weight {
       percentage      = 100
       latest_revision = true
@@ -379,36 +231,16 @@ resource "azurerm_container_app" "logparser" {
   }
 }
 
-# Storage Account for Ollama models (persistent storage)
-resource "azurerm_storage_account" "ollama" {
-  name                     = "autolog${var.environment}ollama"
-  resource_group_name      = azurerm_resource_group.main.name
-  location                 = azurerm_resource_group.main.location
-  account_tier             = "Standard"
-  account_replication_type = local.is_production ? "ZRS" : "LRS"
-  tags                     = local.tags
-}
-
-# File Share for Ollama models
-resource "azurerm_storage_share" "ollama_models" {
-  name                 = "ollama-models"
-  storage_account_name = azurerm_storage_account.ollama.name
-  quota                = var.ollama_storage_gb * 1024  # Convert GB to MB
-}
-
-# Container App - Ollama
+# Container App - Ollama (using official Ollama image with model downloads)
 resource "azurerm_container_app" "ollama" {
   name                         = "${local.name_prefix}-ollama"
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = azurerm_resource_group.main.name
-  revision_mode                = var.enable_auto_scaling ? "Multiple" : "Single"
-  tags                         = local.tags
-  
-  depends_on = [
-    azurerm_container_app_environment.main,
-    azurerm_container_app_environment_storage.ollama_storage
-  ]
+  revision_mode                = "Single"
 
+  identity {
+    type = "SystemAssigned"
+  }
   template {
     container {
       name   = "ollama"
@@ -420,35 +252,19 @@ resource "azurerm_container_app" "ollama" {
         name  = "OLLAMA_HOST"
         value = "0.0.0.0"
       }
-      env {
-        name  = "OLLAMA_ORIGINS"
-        value = "*"
-      }
-      env {
-        name  = "OLLAMA_MODELS"
-        value = "/models"
-      }
-
-      # Mount the persistent storage volume
-      volume_mounts {
-        name = "ollama-models"
-        path = "/root/.ollama"
-      }
-    }
-
-    # Mount persistent storage for models
-    volume {
-      name         = "ollama-models"
-      storage_type = "AzureFile"
-      storage_name = azurerm_storage_share.ollama_models.name
+      
+      # Add startup command to download models
+      command = ["/bin/sh", "-c"]
+      args = [
+        "ollama serve & sleep 10 && ollama pull ${var.ollama_model} && ollama pull ${var.ollama_embed_model} && wait"
+      ]
     }
   }
 
-  # Auto-scaling and revision management handled by Azure Container Apps
-
   ingress {
     external_enabled = true
-    target_port     = var.ollama_port
+    target_port     = 11434
+    transport       = "http"
     traffic_weight {
       percentage      = 100
       latest_revision = true
@@ -456,115 +272,87 @@ resource "azurerm_container_app" "ollama" {
   }
 }
 
-# Static Web App for Frontend
-resource "azurerm_static_web_app" "frontend" {
-  name                = "${local.name_prefix}-frontend"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  tags                = local.tags
-  
-  depends_on = [
-    azurerm_resource_group.main
-  ]
+# Role assignments for ACR access (created after container apps)
+resource "azurerm_role_assignment" "acr_pull_backend" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+  depends_on           = [azurerm_container_app.backend]
 }
 
-# Cost monitoring (commented out for test environments)
-# resource "azurerm_monitor_action_group" "cost_alert" {
-#   name                = "${local.name_prefix}-cost-alerts"
-#   resource_group_name = azurerm_resource_group.main.name
-#   short_name          = "cost-alert"
-#   tags                = local.tags
-#   email_receiver {
-#     name                    = "admin"
-#     email_address          = "admin@example.com"
-#     use_common_alert_schema = true
-#   }
-# }
+resource "azurerm_role_assignment" "acr_pull_logparser" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.logparser.identity[0].principal_id
+  depends_on           = [azurerm_container_app.logparser]
+}
 
-# resource "azurerm_monitor_metric_alert" "cost_alert" {
-#   name                = "${local.name_prefix}-cost-alert"
-#   resource_group_name = azurerm_resource_group.main.name
-#   scopes               = [azurerm_resource_group.main.id]
-#   tags                 = local.tags
-#   criteria {
-#     metric_namespace = "Microsoft.Resources/subscriptions/resourceGroups"
-#     metric_name      = "Cost"
-#     aggregation      = "Total"
-#     operator         = "GreaterThan"
-#     threshold        = 50
-#     dimension {
-#       name     = "ResourceGroupName"
-#       operator = "Include"
-#       values   = [azurerm_resource_group.main.name]
-#     }
-#   }
-#   action {
-#     action_group_id = azurerm_monitor_action_group.cost_alert.id
-#   }
-#   frequency = "PT1H"
-#   window_size = "PT1H"
-# }
+resource "azurerm_role_assignment" "acr_pull_ollama" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.ollama.identity[0].principal_id
+  depends_on           = [azurerm_container_app.ollama]
+}
 
-# Data sources
-data "azurerm_client_config" "current" {}
+# =============================================================================
+# OUTPUTS
+# =============================================================================
 
-# Outputs
+# Phase 1 Outputs
 output "resource_group_name" {
   description = "Name of the resource group"
   value       = azurerm_resource_group.main.name
 }
 
-output "container_registry_url" {
-  description = "Container registry URL"
-  value       = var.use_azure_registry ? azurerm_container_registry.main[0].login_server : var.container_registry_url
+output "resource_group_location" {
+  description = "Location of the resource group"
+  value       = azurerm_resource_group.main.location
 }
 
-output "database_fqdn" {
-  description = "Database FQDN"
-  value       = azurerm_postgresql_flexible_server.main.fqdn
+output "container_registry_name" {
+  description = "Name of the Azure Container Registry"
+  value       = azurerm_container_registry.main.name
 }
 
-output "frontend_url" {
-  description = "Frontend URL"
-  value       = azurerm_static_web_app.frontend.default_host_name
+output "container_registry_login_server" {
+  description = "Login server URL for the Azure Container Registry"
+  value       = azurerm_container_registry.main.login_server
 }
 
-output "backend_url" {
-  description = "Backend URL"
-  value       = azurerm_container_app.backend.latest_revision_fqdn
-}
-
-output "logparser_url" {
-  description = "Log Parser URL"
-  value       = azurerm_container_app.logparser.latest_revision_fqdn
-}
-
-output "ollama_url" {
-  description = "Ollama URL"
-  value       = azurerm_container_app.ollama.latest_revision_fqdn
-}
-
-output "key_vault_name" {
-  description = "Key Vault name"
-  value       = var.enable_key_vault ? azurerm_key_vault.main[0].name : "Key Vault not enabled"
-}
-
-output "application_insights_key" {
-  description = "Application Insights instrumentation key"
-  value       = var.enable_monitoring ? azurerm_application_insights.main[0].instrumentation_key : "Monitoring not enabled"
+output "container_registry_username" {
+  description = "Username for the Azure Container Registry"
+  value       = azurerm_container_registry.main.admin_username
   sensitive   = true
 }
 
-output "estimated_monthly_cost" {
-  description = "Estimated monthly cost breakdown"
-  value = {
-    database = local.is_production ? "~$200-400 (Production tier)" : local.is_staging ? "~$100-200 (Staging tier)" : "~$15-25 (Basic tier)"
-    container_apps = var.use_spot_instances ? "~$20-40 (Spot instances)" : local.is_production ? "~$200-500 (Production instances)" : local.is_staging ? "~$100-250 (Staging instances)" : "~$40-80 (Standard instances)"
-    static_web_app = "~$5-10"
-    container_registry = var.use_azure_registry ? (local.is_production ? "~$20-50 (Premium ACR)" : "~$5-10 (Standard ACR)") : "Free (Docker Hub)"
-    storage_account = "~$5-20 (for Ollama models)"
-    monitoring = var.enable_monitoring ? "~$10-30" : "Free (disabled)"
-    key_vault = var.enable_key_vault ? "~$5-10" : "Free (not enabled)"
-    total = local.is_production ? "~$440-1010/month" : local.is_staging ? "~$220-510/month" : "~$65-125/month"
-  }
+output "container_registry_password" {
+  description = "Password for the Azure Container Registry"
+  value       = azurerm_container_registry.main.admin_password
+  sensitive   = true
+}
+
+# Phase 3 Outputs
+output "backend_url" {
+  description = "URL of the Backend Container App"
+  value       = "https://${azurerm_container_app.backend.latest_revision_fqdn}"
+}
+
+output "logparser_url" {
+  description = "URL of the Logparser Container App"
+  value       = "https://${azurerm_container_app.logparser.latest_revision_fqdn}"
+}
+
+output "ollama_url" {
+  description = "URL of the Ollama Container App"
+  value       = "https://${azurerm_container_app.ollama.latest_revision_fqdn}"
+}
+
+output "database_host" {
+  description = "Database host"
+  value       = azurerm_postgresql_flexible_server.main.fqdn
+}
+
+output "database_name" {
+  description = "Database name"
+  value       = azurerm_postgresql_flexible_server_database.main.name
 } 
