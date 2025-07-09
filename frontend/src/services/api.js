@@ -1,9 +1,7 @@
-// IMPORTANT: To avoid duplicated /api/v1 in your API URLs, set VITE_API_URL to 'http://localhost:8080' (without /api/v1) in your .env file.
-// The endpoints below already include /api/v1 in their paths.
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8080',
+  baseURL: import.meta.env.VITE_API_URL || 'https://backend.autolog.tech',
   headers: {
     'Content-Type': 'application/json',
   },

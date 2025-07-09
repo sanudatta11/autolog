@@ -1,0 +1,9 @@
+{
+  "appLocation": ".",
+  "apiLocation": "../backend",
+  "outputLocation": "dist",
+  "appDevserverUrl": "http://localhost:5173",
+  "run": "npm run dev",
+  "apiPort": 8080,
+  "apiPrefix": "/api"
+} 
