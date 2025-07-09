@@ -175,12 +175,37 @@ resource "azurerm_container_app" "backend" {
         value = azurerm_postgresql_flexible_server.main.administrator_password
       }
       env {
+        name  = "DB_SSLMODE"
+        value = "require"
+      }
+      env {
         name  = "JWT_SECRET"
         value = var.jwt_secret
       }
       env {
         name  = "ENVIRONMENT"
         value = var.environment
+      }
+      env {
+        name  = "PORT"
+        value = "8080"
+      }
+      env {
+        name  = "LOG_LEVEL"
+        value = var.log_level
+      }
+      env {
+        name  = "OLLAMA_URL"
+        value = "https://${azurerm_container_app.ollama.latest_revision_fqdn}"
+      }
+      env {
+        name  = "OLLAMA_MODEL"
+        value = var.ollama_model
+      }
+      # Remove the circular dependency - we'll set this in phase 4
+      env {
+        name  = "LOGPARSER_URL"
+        value = "http://localhost:5000"  # Default fallback
       }
     }
   }
@@ -216,6 +241,10 @@ resource "azurerm_container_app" "logparser" {
       env {
         name  = "ENVIRONMENT"
         value = var.environment
+      }
+      env {
+        name  = "PORT"
+        value = "5000"
       }
     }
   }
