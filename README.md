@@ -122,11 +122,17 @@ AutoLog uses a **phased deployment system** that uses Terraform targeting to dep
 # Phase 2: Build and Push Docker Images  
 ./scripts/deploy-phased.sh --phase 2
 
-# Phase 3: Main Infrastructure (Database, Container Apps)
+# Phase 3: Deploy Ollama Container Service
 ./scripts/deploy-phased.sh --phase 3
 
-# Phase 4: Frontend Deployment (SWA)
+# Phase 4: Deploy Custom Applications
 ./scripts/deploy-phased.sh --phase 4
+
+# Phase 5: Update to Custom Images
+./scripts/deploy-phased.sh --phase 5
+
+# Phase 6: Frontend Deployment (SWA)
+./scripts/deploy-phased.sh --phase 6
 ```
 
 **Skip specific phases:**
@@ -146,13 +152,21 @@ AutoLog uses a **phased deployment system** that uses Terraform targeting to dep
    - Pushes images to the configured registry
    - Supports both Azure ACR and Docker Hub
 
-3. **Phase 3**: Main Infrastructure
+3. **Phase 3**: Deploy Ollama Container Service
+   - Builds custom Ollama container image with pre-downloaded models
+   - Pushes Ollama image to container registry
+   - Deploys Ollama as a container service with proper model management
+
+4. **Phase 4**: Deploy Custom Applications
    - Deploys PostgreSQL database
    - Creates Container Apps Environment
-   - Deploys backend, logparser, and Ollama container apps
-   - Configures environment variables and networking
+   - Deploys backend and logparser container apps (using placeholder images)
 
-4. **Phase 4**: Frontend Deployment
+5. **Phase 5**: Update to Custom Images
+   - Updates backend and logparser to use custom built images
+   - Replaces placeholder images with actual application images
+
+6. **Phase 6**: Frontend Deployment
    - Builds React frontend with Vite
    - Deploys to Azure Static Web Apps
    - Configures API routing to backend

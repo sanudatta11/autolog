@@ -89,16 +89,17 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --phase PHASE        Run specific phase (1, 2, 3, 4, 5, or all)"
+            echo "  --phase PHASE        Run specific phase (1, 2, 3, 4, 5, 6, or all)"
             echo "  --skip-phase PHASE   Skip specific phase (can be used multiple times)"
             echo "  --help               Show this help message"
             echo ""
             echo "Phases:"
             echo "  1 - Create container registry infrastructure"
             echo "  2 - Build and push Docker images"
-            echo "  3 - Deploy main infrastructure (database, container apps with nginx/ollama)"
-            echo "  4 - Update backend and logparser to use custom images"
-            echo "  5 - Deploy frontend with SWA"
+            echo "  3 - Deploy Ollama container service"
+            echo "  4 - Deploy custom applications (backend, logparser)"
+            echo "  5 - Update to custom images"
+            echo "  6 - Deploy frontend with SWA"
             echo ""
             exit 0
             ;;
@@ -183,14 +184,17 @@ run_phase "1" "Create Container Registry Infrastructure" "" "azurerm_resource_gr
 # Phase 2: Build and Push Images
 run_phase "2" "Build and Push Docker Images" "scripts/phase2-build-images.sh" ""
 
-# Phase 3: Main Infrastructure (with nginx and ollama)
-run_phase "3" "Deploy Main Infrastructure" "" "azurerm_postgresql_flexible_server.main azurerm_postgresql_flexible_server_database.main azurerm_container_app_environment.main azurerm_container_app.backend azurerm_container_app.logparser azurerm_container_app.ollama"
+# Phase 3: Deploy Ollama Container Service
+run_phase "3" "Deploy Ollama Container Service" "scripts/phase3-deploy-ollama.sh" ""
 
-# Phase 4: Update to Custom Images
-run_phase "4" "Update Backend and Logparser to Use Custom Images" "scripts/phase4-update-images.sh" ""
+# Phase 4: Deploy Custom Applications
+run_phase "4" "Deploy Custom Applications" "" "azurerm_postgresql_flexible_server.main azurerm_postgresql_flexible_server_database.main azurerm_container_app_environment.main azurerm_container_app.backend azurerm_container_app.logparser"
 
-# Phase 5: Frontend Deployment
-run_phase "5" "Deploy Frontend with SWA" "scripts/phase5-deploy-frontend.sh" ""
+# Phase 5: Update to Custom Images
+run_phase "5" "Update to Custom Images" "scripts/phase5-update-images.sh" ""
+
+# Phase 6: Frontend Deployment
+run_phase "6" "Deploy Frontend with SWA" "scripts/phase6-deploy-frontend.sh" ""
 
 echo ""
 print_success "🎉 Deployment completed successfully!"
