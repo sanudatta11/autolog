@@ -95,7 +95,16 @@ const Logs = () => {
     setLoading(true);
     try {
       const response = await api.get('/logs');
-      setLogFiles(response.data.logFiles || []);
+      const newLogFiles = response.data.logFiles || [];
+      setLogFiles(newLogFiles);
+      
+      // Preserve selectedLogFile if it exists, but update it with fresh data
+      if (selectedLogFile) {
+        const updatedSelectedLogFile = newLogFiles.find(log => log.id === selectedLogFile.id);
+        if (updatedSelectedLogFile) {
+          setSelectedLogFile(updatedSelectedLogFile);
+        }
+      }
     } catch (error) {
       setMessage({ text: 'Failed to fetch log files: ' + error.message, type: 'error' });
     } finally {
@@ -894,8 +903,9 @@ const Logs = () => {
           </h2>
           
           {/* RCA Analysis Component */}
-          <div className="mb-6">
+          <div className="mb-6 transition-opacity duration-300">
             <RCAnalysis 
+              key={selectedLogFile.id} // Add key to prevent unnecessary re-renders
               logFileId={selectedLogFile.id} 
               initialStatus={selectedLogFile.rcaAnalysisStatus || 'idle'}
               hasReview={selectedLogFile?.hasReview}

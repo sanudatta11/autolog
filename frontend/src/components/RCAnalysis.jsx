@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import api from '../services/api';
 import { PollingContext } from './Layout';
 
 const POLL_INTERVAL = 2000;
 
-const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) => {
+const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisComplete }) => {
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState(initialStatus); // idle, pending, running, completed, failed
   const [progress, setProgress] = useState(0);
@@ -35,9 +35,10 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
   const [jobFeedbacks, setJobFeedbacks] = useState({}); // { jobId: feedbackObj }
+  const [isInitializing, setIsInitializing] = useState(true);
 
   // Helper to poll job status
-  const pollJobStatus = (jobId) => {
+  const pollJobStatus = useCallback((jobId) => {
     api.get(`/jobs/${jobId}/status`).then(response => {
       const job = response.data.job;
       setStatus(job.status);
@@ -57,16 +58,17 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       setError('Failed to check job status');
       clearInterval(pollingRef.current);
     });
-  };
+  }, [onAnalysisComplete]);
 
   // Helper to determine if polling should be active
-  const shouldPoll = () => {
+  const shouldPoll = useCallback(() => {
     return pollingEnabled && (status === 'pending' || status === 'running' || status === 'processing');
-  };
+  }, [pollingEnabled, status]);
 
   // On mount or when logFileId changes, check for active RCA job (but do not set up polling here)
   useEffect(() => {
     let cancelled = false;
+    setIsInitializing(true);
     api.get(`/logs/${logFileId}/analyses`).then(res => {
       if (cancelled) return;
       const jobs = res.data.analyses || [];
@@ -75,6 +77,11 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         setJobId(activeJob.id);
         setProgress(activeJob.progress || 0);
         setStatus(activeJob.status);
+      }
+      setIsInitializing(false);
+    }).catch(() => {
+      if (!cancelled) {
+        setIsInitializing(false);
       }
     });
     return () => {
@@ -93,10 +100,10 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [jobId, status, pollingEnabled]);
+  }, [jobId, status, pollingEnabled, shouldPoll, pollJobStatus]);
 
   // Fetch all RCA jobs for this log file
-  const fetchJobs = async () => {
+  const fetchJobs = useCallback(async () => {
     setLoadingJobs(true);
     try {
       const response = await api.get(`/logs/${logFileId}/analyses`);
@@ -105,17 +112,17 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       setJobs([]);
     }
     setLoadingJobs(false);
-  };
+  }, [logFileId]);
 
   // Fetch log file details
-  const fetchLogFileDetails = async () => {
+  const fetchLogFileDetails = useCallback(async () => {
     try {
       const response = await api.get(`/logs/${logFileId}`);
       setLogFileDetails(response.data.logFile);
     } catch (err) {
       console.error('Failed to fetch log file details:', err);
     }
-  };
+  }, [logFileId]);
 
   useEffect(() => {
     if (logFileId) {
@@ -236,6 +243,22 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     }
     setIsSubmitting(false);
   };
+
+  // Show loading state during initialization
+  if (isInitializing) {
+    return (
+      <div className="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-6 transition-all duration-300 ease-in-out">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold text-gray-900">Root Cause Analysis</h2>
+          <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs font-semibold text-gray-700 border border-gray-200">Loading...</span>
+        </div>
+        <div className="flex items-center justify-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="ml-3 text-gray-600">Loading RCA data...</span>
+        </div>
+      </div>
+    );
+  }
 
   // Before rendering RCA controls, check if RCA is possible
   if (logFileDetails && logFileDetails.isRCAPossible === false) {
@@ -362,7 +385,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   }, [jobs]);
 
   return (
-    <div className="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-6">
+    <div className="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-6 transition-all duration-300 ease-in-out">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-lg font-semibold text-gray-900">Root Cause Analysis</h2>
         <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs font-semibold text-gray-700 border border-gray-200">{getStatusText()}</span>
@@ -813,6 +836,6 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       )}
     </div>
   );
-};
+});
 
 export default RCAnalysis; 
