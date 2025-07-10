@@ -174,6 +174,22 @@ function ParsingRules() {
     setShowTestModal(true)
   }
 
+  // Validation function for parsing rule form
+  const isFormValid = () => {
+    if (!formData.name.trim()) return false;
+    if (formData.fieldMappings.length === 0) return false;
+    if (formData.regexPatterns.length === 0) return false;
+    // All field mappings must have sourceField and targetField
+    for (const mapping of formData.fieldMappings) {
+      if (!mapping.sourceField.trim() || !mapping.targetField.trim()) return false;
+    }
+    // All regex patterns must have name and pattern
+    for (const pattern of formData.regexPatterns) {
+      if (!pattern.name.trim() || !pattern.pattern.trim()) return false;
+    }
+    return true;
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -454,7 +470,8 @@ function ParsingRules() {
                 </button>
                 <button
                   onClick={() => selectedRule ? handleUpdateRule(selectedRule.id) : handleCreateRule()}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
+                  className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+                  disabled={!isFormValid()}
                 >
                   {selectedRule ? 'Update' : 'Create'}
                 </button>
