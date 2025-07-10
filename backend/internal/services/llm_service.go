@@ -799,7 +799,9 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := ls.client.Do(req)
+	// Create a custom HTTP client with the specified timeout
+	customClient := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+	resp, err := customClient.Do(req)
 	elapsed := time.Since(startTime)
 
 	if err != nil {

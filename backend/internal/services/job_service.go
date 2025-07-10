@@ -248,7 +248,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 
 	// Aggregate partials into a final RCA report using LLM
 	var rawLLMResponse string
-	aggregated, rawResp, err := js.aggregatePartialAnalysesWithRaw(job.LogFile, partials)
+	aggregated, rawResp, err := js.aggregatePartialAnalysesWithRaw(job.LogFile, partials, timeout)
 	if err != nil {
 		logger.Error("RCA aggregation failed", map[string]interface{}{"jobID": jobID, "error": err})
 		js.updateJobStatus(jobID, models.JobStatusFailed, err.Error(), nil)
@@ -632,7 +632,7 @@ func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, e
 }
 
 // aggregatePartialAnalysesWithRaw aggregates chunk results into a final RCA report using the LLM
-func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, partials []*LogAnalysisResponse) (*LogAnalysisResponse, string, error) {
+func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, partials []*LogAnalysisResponse, timeout int) (*LogAnalysisResponse, string, error) {
 	if len(partials) == 0 {
 		return nil, "", fmt.Errorf("no partial analyses to aggregate")
 	}
@@ -679,8 +679,8 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 		return nil, "", fmt.Errorf("user has no LLM endpoint configured for aggregation")
 	}
 
-	// Call LLM for aggregation using user's endpoint
-	response, err := js.llmService.callLLMWithEndpoint(prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation")
+	// Call LLM for aggregation using user's endpoint with timeout
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout)
 	if err != nil {
 		return nil, "", fmt.Errorf("LLM aggregation failed: %w", err)
 	}
