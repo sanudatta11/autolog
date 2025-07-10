@@ -215,7 +215,6 @@ az containerapp logs show --name autolog-test-ollama --resource-group autolog-rg
 
 ### Backend Configuration
 ```bash
-OLLAMA_URL=https://autolog-test-ollama--spot.blackglacier-1f47edad.centralus.azurecontainerapps.io
 OLLAMA_MODEL=codellama:7b
 OLLAMA_EMBED_MODEL=nomic-embed-text:latest
 ```

@@ -39,7 +39,6 @@ services:
       CORS_ORIGIN: http://localhost:5173
       ENV: development
       PORT: 8080
-      OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: codellama:7b
       LOGPARSER_URL: http://logparser-service:8001
     depends_on:

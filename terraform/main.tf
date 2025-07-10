@@ -195,10 +195,6 @@ resource "azurerm_container_app" "backend" {
         value = var.log_level
       }
       env {
-        name  = "OLLAMA_URL"
-        value = "https://autolog-${var.environment}-ollama--0000001.icybeach-e84cf941.centralus.azurecontainerapps.io"  # Default fallback - will be updated in Phase 3
-      }
-      env {
         name  = "OLLAMA_MODEL"
         value = var.ollama_model
       }
@@ -329,10 +325,7 @@ output "logparser_url" {
   value       = "https://${azurerm_container_app.logparser.latest_revision_fqdn}"
 }
 
-output "ollama_url" {
-  description = "URL of the Ollama Container App"
-  value       = "https://autolog-${var.environment}-ollama--0000001.icybeach-e84cf941.centralus.azurecontainerapps.io"
-}
+
 
 output "database_host" {
   description = "Database host"

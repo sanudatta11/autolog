@@ -422,7 +422,6 @@ Update your AutoLog backend configuration:
 
 ```bash
 # Environment variables
-OLLAMA_URL=http://localhost:80
 OLLAMA_MODEL=codellama:7b
 OLLAMA_EMBED_MODEL=nomic-embed-text:latest
 ```

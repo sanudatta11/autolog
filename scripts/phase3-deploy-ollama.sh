@@ -123,15 +123,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Get Ollama URL
-OLLAMA_URL=$(terraform output -raw ollama_url 2>/dev/null || echo "")
-
-if [ -z "$OLLAMA_URL" ]; then
-    print_warning "Could not retrieve Ollama URL from Terraform output"
-else
-    print_success "Ollama deployed successfully!"
-    print_status "Ollama URL: $OLLAMA_URL"
-fi
+print_success "Ollama deployed successfully!"
 
 # Clean up temporary file
 rm -f ollama.tf
@@ -143,6 +135,5 @@ echo ""
 print_status "Next steps:"
 echo "  - Run Phase 4 to deploy custom applications"
 echo "  - Ollama models are being downloaded in the background"
-echo "  - You can check model status at: $OLLAMA_URL/api/tags"
 echo "  - Models being downloaded: $OLLAMA_MODEL, $OLLAMA_EMBED_MODEL"
 echo "" 

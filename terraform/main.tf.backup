@@ -195,10 +195,6 @@ resource "azurerm_container_app" "backend" {
         value = var.log_level
       }
       env {
-        name  = "OLLAMA_URL"
-        value = "https://${azurerm_container_app.ollama.latest_revision_fqdn}"
-      }
-      env {
         name  = "OLLAMA_MODEL"
         value = var.ollama_model
       }
@@ -371,10 +367,7 @@ output "logparser_url" {
   value       = "https://${azurerm_container_app.logparser.latest_revision_fqdn}"
 }
 
-output "ollama_url" {
-  description = "URL of the Ollama Container App"
-  value       = "https://${azurerm_container_app.ollama.latest_revision_fqdn}"
-}
+
 
 output "database_host" {
   description = "Database host"

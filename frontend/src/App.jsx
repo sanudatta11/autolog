@@ -4,7 +4,6 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Logs from './pages/Logs'
 import LLMStatus from './pages/LLMStatus'
@@ -27,7 +26,6 @@ function AppRoutes() {
         </PrivateRoute>
       }>
         <Route index element={<Dashboard />} />
-        <Route path="users" element={<Users />} />
         <Route path="settings" element={<Settings />} />
         <Route path="logs" element={<Logs />} />
         <Route path="parsing-rules" element={<ParsingRules />} />

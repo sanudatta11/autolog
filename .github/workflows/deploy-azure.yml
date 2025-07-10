@@ -168,7 +168,6 @@ jobs:
                 CORS_ORIGIN="https://autolog-frontend-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io" \
                 ENV="${{ github.event.inputs.environment || 'test' }}" \
                 PORT="8080" \
-                OLLAMA_URL="https://autolog-ollama-${{ github.event.inputs.environment || 'test' }}.${{ env.LOCATION }}.azurecontainer.io:11434" \
                 OLLAMA_MODEL="codellama:7b" \
             --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
             --registry-username ${{ secrets.REGISTRY_USERNAME }} \

@@ -20,7 +20,6 @@ function Layout() {
     { name: 'Log Analysis', href: '/logs', icon: '🔍' },
     { name: 'Parsing Rules', href: '/parsing-rules', icon: '⚙️' },
     { name: 'LLM Status', href: '/llm-status', icon: '🤖' },
-    { name: 'Users', href: '/users', icon: '👥' },
     { name: 'Settings', href: '/settings', icon: '⚙️' },
   ]
 

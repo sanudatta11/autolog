@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"os"
-
 	"github.com/autolog/backend/internal/controllers"
 	"github.com/autolog/backend/internal/middleware"
 	"github.com/autolog/backend/internal/services"
@@ -12,11 +10,8 @@ import (
 
 // SetupRoutes configures all application routes
 func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
-	// Initialize services
-	llmService := services.NewLLMService(
-		os.Getenv("OLLAMA_URL"),
-		os.Getenv("OLLAMA_MODEL"),
-	)
+	// Initialize services with default values (will be overridden by per-user endpoints)
+	llmService := services.NewLLMService("", "")
 
 	// Initialize services
 	parsingRuleService := services.NewParsingRuleService(db)
