@@ -525,6 +525,13 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 		opts.Chunking = true
 	}
 
+	// Enforce required fields and valid values
+	if opts.Timeout <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Timeout is required and must be a positive integer"})
+		return
+	}
+	// chunking is a bool, so no further validation needed
+
 	// Check if user owns this log file
 	var logFile models.LogFile
 	if err := lc.db.First(&logFile, logFileID).Error; err != nil {

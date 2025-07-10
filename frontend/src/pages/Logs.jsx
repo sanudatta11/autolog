@@ -46,6 +46,11 @@ const Logs = () => {
   const [reviewError, setReviewError] = useState('');
 
   const [analyzeLoading, setAnalyzeLoading] = useState({}); // { [logFileId]: boolean }
+  const [rcaModalOpen, setRcaModalOpen] = useState(false);
+  const [rcaTargetLogFileId, setRcaTargetLogFileId] = useState(null);
+  const [rcaTimeout, setRcaTimeout] = useState(300);
+  const [rcaChunking, setRcaChunking] = useState(true);
+  const [rcaError, setRcaError] = useState('');
 
   // After logFiles are updated, check if polling should be running
   useEffect(() => {
@@ -198,6 +203,40 @@ const Logs = () => {
       setMessage({ text: 'Analysis failed: ' + (error.response?.data?.error || error.message), type: 'error' });
     } finally {
       setAnalyzeLoading((prev) => ({ ...prev, [logFileId]: false }));
+    }
+  };
+
+  // Show RCA modal instead of direct analyze
+  const openRcaModal = (logFileId) => {
+    setRcaTargetLogFileId(logFileId);
+    setRcaTimeout(300);
+    setRcaChunking(true);
+    setRcaError('');
+    setRcaModalOpen(true);
+  };
+
+  // New handler for RCA with options
+  const handleRcaProceed = async () => {
+    if (!rcaTimeout || isNaN(rcaTimeout) || rcaTimeout <= 0) {
+      setRcaError('Timeout is required and must be a positive number.');
+      return;
+    }
+    setRcaModalOpen(false);
+    setAnalyzeLoading((prev) => ({ ...prev, [rcaTargetLogFileId]: true }));
+    try {
+      const response = await api.post(`/logs/${rcaTargetLogFileId}/analyze`, {
+        timeout: Number(rcaTimeout),
+        chunking: rcaChunking,
+      });
+      const msg = response.data && response.data.message
+        ? response.data.message
+        : 'RCA analysis started.';
+      setMessage({ text: 'RCA analysis started: ' + msg, type: 'success' });
+      fetchLogFiles();
+    } catch (error) {
+      setMessage({ text: 'Analysis failed: ' + (error.response?.data?.error || error.message), type: 'error' });
+    } finally {
+      setAnalyzeLoading((prev) => ({ ...prev, [rcaTargetLogFileId]: false }));
     }
   };
 
@@ -776,7 +815,7 @@ const Logs = () => {
                     {/* RCA buttons only if RCA is possible */}
                     {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
                       <button
-                        onClick={() => handleAnalyze(logFile.id)}
+                        onClick={() => openRcaModal(logFile.id)}
                         className={`bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
                         disabled={analyzeLoading[logFile.id]}
                       >
@@ -789,7 +828,7 @@ const Logs = () => {
                     )}
                     {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
                       <button
-                        onClick={() => handleAnalyze(logFile.id)}
+                        onClick={() => openRcaModal(logFile.id)}
                         className={`bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
                         disabled={analyzeLoading[logFile.id]}
                       >
@@ -1208,6 +1247,71 @@ const Logs = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {rcaModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6 relative">
+            <button
+              onClick={() => setRcaModalOpen(false)}
+              className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-2xl"
+              aria-label="Close"
+            >
+              &times;
+            </button>
+            <h2 className="text-lg font-semibold mb-4">RCA Analysis Options</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">LLM Timeout (seconds) <span className="text-red-500">*</span></label>
+                <input
+                  type="number"
+                  min="1"
+                  className="input mt-1 w-full"
+                  value={rcaTimeout}
+                  onChange={e => setRcaTimeout(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Chunking <span className="text-red-500">*</span></label>
+                <div className="flex gap-6 mt-1">
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      name="chunking"
+                      value="yes"
+                      checked={rcaChunking === true}
+                      onChange={() => setRcaChunking(true)}
+                      className="form-radio"
+                      required
+                    />
+                    <span className="ml-1">Yes</span>
+                  </label>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      name="chunking"
+                      value="no"
+                      checked={rcaChunking === false}
+                      onChange={() => setRcaChunking(false)}
+                      className="form-radio"
+                      required
+                    />
+                    <span className="ml-1">No</span>
+                  </label>
+                </div>
+              </div>
+              {rcaError && <div className="text-red-600">{rcaError}</div>}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleRcaProceed}
+                  className="bg-primary-600 text-white px-4 py-2 rounded hover:bg-primary-700"
+                >
+                  Proceed
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
