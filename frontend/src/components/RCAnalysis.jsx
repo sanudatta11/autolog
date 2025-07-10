@@ -547,6 +547,13 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
             <div className="bg-white border border-gray-200 rounded-md p-4 mt-2">
           <h4 className="font-medium text-gray-900 mb-3">Analysis Results</h4>
           <div className="space-y-3">
+            {/* Severity Legend */}
+            <div className="flex items-center gap-4 mb-2">
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Critical</span>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">High</span>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Medium</span>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Low</span>
+            </div>
             {(() => {
               // Use analysis.final if present, else analysis
               const analysis = results.analysis?.final || results.analysis || results;
