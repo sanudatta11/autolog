@@ -1129,7 +1129,7 @@ func (ls *LLMService) CheckLLMGenerate() error {
 func (ls *LLMService) CheckLLMStatusWithEndpoint(endpoint string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("%s/api/health", endpoint)
+	url := fmt.Sprintf("%s/api/tags", endpoint)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create status check request: %w", err)
@@ -1210,6 +1210,35 @@ type OllamaModelsResponse struct {
 func (ls *LLMService) GetAvailableModels() ([]string, error) {
 	url := fmt.Sprintf("%s/api/tags", ls.baseURL)
 	resp, err := ls.client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get models: status %d", resp.StatusCode)
+	}
+
+	var modelsResp OllamaModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		return nil, err
+	}
+
+	var modelNames []string
+	for _, model := range modelsResp.Models {
+		modelNames = append(modelNames, model.Name)
+	}
+
+	return modelNames, nil
+}
+
+// GetAvailableModelsWithEndpoint returns the list of available models from a specific endpoint
+func (ls *LLMService) GetAvailableModelsWithEndpoint(endpoint string) ([]string, error) {
+	url := fmt.Sprintf("%s/api/tags", endpoint)
+
+	// Create a client with timeout for this specific request
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}

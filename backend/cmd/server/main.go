@@ -25,15 +25,19 @@ import (
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if os.Getenv("ENV") == "local" || os.Getenv("ENV") == "" {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
-		} else {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", os.Getenv("CORS_ORIGIN"))
+		// Set CORS headers for all requests
+		origin := "http://localhost:5173"
+		if os.Getenv("ENV") != "local" && os.Getenv("ENV") != "" {
+			if corsOrigin := os.Getenv("CORS_ORIGIN"); corsOrigin != "" {
+				origin = corsOrigin
+			}
 		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 
 		// Handle preflight request
 		if c.Request.Method == http.MethodOptions {

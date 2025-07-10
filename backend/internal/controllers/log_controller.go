@@ -726,7 +726,7 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 	}
 
 	// Get available models from user's endpoint
-	models, modelsError := lc.llmService.GetAvailableModels()
+	models, modelsError := lc.llmService.GetAvailableModelsWithEndpoint(*user.LLMEndpoint)
 
 	// Get current model configuration
 	currentModel := "llama2" // Default, could be made configurable
@@ -734,6 +734,19 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 	status := "healthy"
 	if healthError != nil {
 		status = "unhealthy"
+	}
+
+	// Convert errors to strings for JSON serialization
+	var healthErrorStr *string
+	if healthError != nil {
+		errStr := healthError.Error()
+		healthErrorStr = &errStr
+	}
+
+	var modelsErrorStr *string
+	if modelsError != nil {
+		errStr := modelsError.Error()
+		modelsErrorStr = &errStr
 	}
 
 	logEntry.Info("LLM status retrieved successfully", map[string]interface{}{
@@ -748,10 +761,10 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":             status,
-		"healthError":        healthError,
+		"healthError":        healthErrorStr,
 		"currentModel":       currentModel,
 		"availableModels":    models,
-		"modelsError":        modelsError,
+		"modelsError":        modelsErrorStr,
 		"userEndpoint":       *user.LLMEndpoint,
 		"lastLLMStatusCheck": user.LLMStatusCheckedAt,
 	})
