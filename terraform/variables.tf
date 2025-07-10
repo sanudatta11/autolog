@@ -118,7 +118,7 @@ variable "log_level" {
 variable "ollama_model" {
   description = "Primary Ollama model to use"
   type        = string
-  default     = "llama2:13b"
+  default     = "codellama:7b"
 }
 
 variable "ollama_embed_model" {

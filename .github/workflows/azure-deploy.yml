@@ -122,7 +122,7 @@ jobs:
             ENV="production" \
             PORT="8080" \
             OLLAMA_URL="${{ secrets.OLLAMA_URL }}" \
-            OLLAMA_MODEL="llama2:13b" \
+                            OLLAMA_MODEL="codellama:7b" \
           --cpu 1 \
           --memory 2 \
           --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \

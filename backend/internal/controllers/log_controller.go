@@ -691,7 +691,7 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 		"current_model":    currentModel,
 		"available_models": models,
 		"models_error":     modelsError,
-		"ollama_url":       "http://localhost:11434",
+		"ollama_url":       os.Getenv("OLLAMA_URL"),
 	})
 
 	c.JSON(http.StatusOK, gin.H{
@@ -700,7 +700,7 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 		"currentModel":    currentModel,
 		"availableModels": models,
 		"modelsError":     modelsError,
-		"ollamaUrl":       "http://localhost:11434",
+		"ollamaUrl":       os.Getenv("OLLAMA_URL"),
 	})
 }
 

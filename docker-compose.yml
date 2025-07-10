@@ -40,7 +40,7 @@ services:
       ENV: development
       PORT: 8080
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama2:13b
+      OLLAMA_MODEL: codellama:7b
       LOGPARSER_URL: http://logparser-service:8001
     depends_on:
       postgres:
@@ -77,7 +77,7 @@ services:
     restart: unless-stopped
     networks:
       - autolog-network
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull llama2:13b && ollama pull nomic-embed-text && tail -f /dev/null"]
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull codellama:7b && ollama pull nomic-embed-text && tail -f /dev/null"]
 
   # React Frontend with Live Reload
   frontend:

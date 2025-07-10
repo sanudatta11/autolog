@@ -27,7 +27,7 @@ ollama_memory = "8Gi"
 
 # Application Configuration
 log_level = "info"
-ollama_model = "llama2:13b"
+ollama_model = "codellama:7b"
 ollama_embed_model = "nomic-embed-text:latest"
 
 # Port Configuration

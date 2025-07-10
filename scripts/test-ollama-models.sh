@@ -27,20 +27,20 @@ curl -s "$OLLAMA_URL/api/tags" | jq -r '.models[] | "📦 \(.name) (\(.size))"'
 
 # Test 3: Test LLaMA model (llama2:13b)
 echo ""
-echo "3. Testing LLaMA model (llama2:13b)..."
+echo "3. Testing CodeLlama model (codellama:7b)..."
 LLAMA_RESPONSE=$(curl -s -X POST "$OLLAMA_URL/api/generate" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama2:13b",
+    "model": "codellama:7b",
     "prompt": "Explain what log analysis is in one sentence.",
     "stream": false
   }')
 
 if echo "$LLAMA_RESPONSE" | jq -e '.response' > /dev/null; then
-    echo "✅ LLaMA model is working"
+    echo "✅ CodeLlama model is working"
     echo "📝 Response: $(echo "$LLAMA_RESPONSE" | jq -r '.response')"
 else
-    echo "❌ LLaMA model test failed"
+    echo "❌ CodeLlama model test failed"
     echo "Response: $LLAMA_RESPONSE"
 fi
 

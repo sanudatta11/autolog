@@ -60,10 +60,11 @@ Use the management script to handle models:
 ## 📦 Required Models for AutoLog
 
 ### Core Models
-1. **llama2:13b** (7.4 GB)
-   - Primary LLaMA model for log analysis
+1. **codellama:7b** (4.1 GB)
+   - Primary CodeLlama model for log analysis
    - Text generation and interpretation
    - Pattern recognition in logs
+   - Code-focused analysis capabilities
 
 2. **nomic-embed-text:latest** (274 MB)
    - Text embedding model
@@ -72,7 +73,7 @@ Use the management script to handle models:
 
 ### Optional Models
 - **llama2:7b** (4.1 GB) - Smaller, faster alternative
-- **codellama:7b** (4.1 GB) - Code-focused analysis
+- **llama2:13b** (7.4 GB) - Larger, more capable model
 - **mistral:7b** (4.1 GB) - High-performance alternative
 
 ## 🔧 Configuration
@@ -113,11 +114,11 @@ volume_mounts:
 
 ### Quick Test
 ```bash
-# Test LLaMA model
+# Test CodeLlama model
 curl -X POST https://autolog-test-ollama--spot.blackglacier-1f47edad.centralus.azurecontainerapps.io/api/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama2:13b",
+    "model": "codellama:7b",
     "prompt": "Explain log analysis in one sentence.",
     "stream": false
   }'
@@ -215,7 +216,7 @@ az containerapp logs show --name autolog-test-ollama --resource-group autolog-rg
 ### Backend Configuration
 ```bash
 OLLAMA_URL=https://autolog-test-ollama--spot.blackglacier-1f47edad.centralus.azurecontainerapps.io
-OLLAMA_MODEL=llama2:13b
+OLLAMA_MODEL=codellama:7b
 OLLAMA_EMBED_MODEL=nomic-embed-text:latest
 ```
 
