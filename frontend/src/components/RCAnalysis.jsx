@@ -129,7 +129,26 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
       fetchJobs();
       fetchLogFileDetails();
     }
-  }, [logFileId]);
+  }, [logFileId, fetchJobs, fetchLogFileDetails]);
+
+  // Fetch feedbacks for all jobs after jobs are loaded
+  useEffect(() => {
+    const fetchFeedbacks = async () => {
+      const feedbackMap = {};
+      for (const job of jobs) {
+        if (job.analysisMemoryId) {
+          try {
+            const res = await api.get(`/analyses/${job.analysisMemoryId}/feedback`);
+            if (res.data.feedback && res.data.feedback.length > 0) {
+              feedbackMap[job.id] = res.data.feedback[0];
+            }
+          } catch {}
+        }
+      }
+      setJobFeedbacks(feedbackMap);
+    };
+    if (jobs.length > 0) fetchFeedbacks();
+  }, [jobs]);
 
   // When starting a new analysis, also start polling
   const startAnalysis = async () => {
@@ -364,25 +383,6 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
 
   // Spinner icon placeholder
   const SpinnerIcon = () => <span className="inline-block animate-spin mr-2">⏳</span>;
-
-  // Fetch feedbacks for all jobs after jobs are loaded
-  useEffect(() => {
-    const fetchFeedbacks = async () => {
-      const feedbackMap = {};
-      for (const job of jobs) {
-        if (job.analysisMemoryId) {
-          try {
-            const res = await api.get(`/analyses/${job.analysisMemoryId}/feedback`);
-            if (res.data.feedback && res.data.feedback.length > 0) {
-              feedbackMap[job.id] = res.data.feedback[0];
-            }
-          } catch {}
-        }
-      }
-      setJobFeedbacks(feedbackMap);
-    };
-    if (jobs.length > 0) fetchFeedbacks();
-  }, [jobs]);
 
   return (
     <div className="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-6 transition-all duration-300 ease-in-out">
