@@ -108,7 +108,7 @@ func NewLLMService(baseURL, llmModel string) *LLMService {
 		baseURL = "http://localhost:11434"
 	}
 	if llmModel == "" {
-		llmModel = "llama2"
+		llmModel = "llama3:8b"
 	}
 
 	logger.Info("LLMService initialized", map[string]interface{}{
@@ -120,7 +120,7 @@ func NewLLMService(baseURL, llmModel string) *LLMService {
 	return &LLMService{
 		baseURL:    baseURL,
 		llmModel:   llmModel,
-		embedModel: "llama2",
+		embedModel: "nomic-embed-text:latest",
 		client:     &http.Client{Timeout: 300 * time.Second},
 		apiCalls:   make([]LLMAPICall, 0),
 	}
@@ -132,7 +132,7 @@ func NewLLMServiceWithEndpoint(baseURL, llmModel string) *LLMService {
 		baseURL = "http://localhost:11434"
 	}
 	if llmModel == "" {
-		llmModel = "llama2"
+		llmModel = "llama3:8b"
 	}
 
 	logger.Info("LLMService initialized with custom endpoint", map[string]interface{}{
@@ -144,7 +144,7 @@ func NewLLMServiceWithEndpoint(baseURL, llmModel string) *LLMService {
 	return &LLMService{
 		baseURL:    baseURL,
 		llmModel:   llmModel,
-		embedModel: "llama2",
+		embedModel: "nomic-embed-text:latest",
 		client:     &http.Client{Timeout: 300 * time.Second},
 		apiCalls:   make([]LLMAPICall, 0),
 	}

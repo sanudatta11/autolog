@@ -729,7 +729,7 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 	models, modelsError := lc.llmService.GetAvailableModelsWithEndpoint(*user.LLMEndpoint)
 
 	// Get current model configuration
-	currentModel := "llama2" // Default, could be made configurable
+	currentModel := "llama3:8b" // Default, could be made configurable
 
 	status := "healthy"
 	if healthError != nil {

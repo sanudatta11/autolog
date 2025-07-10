@@ -49,7 +49,8 @@ OLLAMA_CPU_LIMIT=""
 OLLAMA_USE_FULL_RESOURCES=""
 
 # Required models
-LLM_MODEL="codellama:7b"
+LLM_MODEL="llama3:8b"
+OPTIONAL_MODELS=("codellama:7b" "nomic-embed-text:latest")
 EMBED_MODEL="nomic-embed-text:latest"
 
 # Colors for output
@@ -491,11 +492,21 @@ pull_models() {
         fi
     }
     
-    # Pull LLM model
+    # Pull LLM model (llama3:8b)
     pull_model "$LLM_MODEL" "LLM"
     
-    # Pull embedding model
-    pull_model "$EMBED_MODEL" "embedding"
+    # Optionally pull other models
+    if [ -z "$NON_INTERACTIVE" ]; then
+        echo
+        info "Optional: Pull additional models (codellama:7b, nomic-embed-text:latest)"
+        for opt_model in "${OPTIONAL_MODELS[@]}"; do
+            read -p "Do you want to pull $opt_model? (y/N): " yn
+            case $yn in
+                [Yy]*) pull_model "$opt_model" "optional";;
+                *) info "Skipping $opt_model";;
+            esac
+        done
+    fi
     
     log "Model pulling completed"
 }
@@ -515,19 +526,12 @@ test_models() {
             # Test embedding model
             response=$(curl -s -X POST "http://localhost:$OLLAMA_PORT/api/embeddings" \
                 -H "Content-Type: application/json" \
-                -d "{
-                    \"model\": \"$model_name\",
-                    \"prompt\": \"Test embedding generation\"
-                }")
+                -d "{\n                    \"model\": \"$model_name\",\n                    \"prompt\": \"Test embedding generation\"\n                }")
         else
             # Test LLM model
             response=$(curl -s -X POST "http://localhost:$OLLAMA_PORT/api/generate" \
                 -H "Content-Type: application/json" \
-                -d "{
-                    \"model\": \"$model_name\",
-                    \"prompt\": \"Hello, this is a test.\",
-                    \"stream\": false
-                }")
+                -d "{\n                    \"model\": \"$model_name\",\n                    \"prompt\": \"Hello, this is a test.\",\n                    \"stream\": false\n                }")
         fi
         
         if echo "$response" | jq -e '.embedding // .response' > /dev/null 2>&1; then
@@ -540,11 +544,13 @@ test_models() {
         fi
     }
     
-    # Test LLM model
+    # Test LLM model (llama3:8b)
     test_model "$LLM_MODEL" "LLM"
     
-    # Test embedding model
-    test_model "$EMBED_MODEL" "embedding"
+    # Optionally test other models
+    for opt_model in "${OPTIONAL_MODELS[@]}"; do
+        test_model "$opt_model" "optional"
+    done
     
     log "Model testing completed"
 }
@@ -709,8 +715,8 @@ show_status() {
     echo "  • File Descriptors: 65536"
     echo
     info "Models Installed:"
-    echo "  • LLM Model: $LLM_MODEL"
-    echo "  • Embedding Model: $EMBED_MODEL"
+    echo "  • Default LLM Model: $LLM_MODEL"
+    echo "  • Optional Models: ${OPTIONAL_MODELS[*]}"
     echo
     info "Management Commands:"
     echo "  • Check status: systemctl status ollama"

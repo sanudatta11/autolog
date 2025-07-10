@@ -127,17 +127,20 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
   // When starting a new analysis, also start polling
   const startAnalysis = async () => {
     try {
+      console.log('Starting RCA analysis for log file:', logFileId);
       setStatus('pending');
       setError('');
       setProgress(0);
       
       const response = await api.post(`/logs/${logFileId}/analyze`);
+      console.log('RCA analysis response:', response.data);
       setJobId(response.data.jobId);
       setStatus('pending');
       if (shouldPoll()) {
       pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
       }
     } catch (err) {
+      console.error('RCA analysis error:', err);
       setError(err.response?.data?.error || 'Failed to start RCA analysis');
       setStatus('failed');
     }
@@ -209,6 +212,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
     setFeedbackSubmitted(false);
     setError('');
     try {
+      console.log('Starting new RCA run for log file:', logFileId, 'with options:', { timeout: llmTimeout, chunking: useChunking });
       setStatus('pending');
       setProgress(0);
       
@@ -217,6 +221,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
         chunking: useChunking,
       });
       
+      console.log('New RCA run response:', response.data);
       setJobId(response.data.jobId);
       setStatus('pending');
       if (shouldPoll()) {
@@ -225,6 +230,7 @@ const RCAnalysis = ({ logFileId, initialStatus = 'idle', onAnalysisComplete }) =
       
       fetchJobs();
     } catch (err) {
+      console.error('New RCA run error:', err);
       setError('Failed to start new RCA analysis');
       setStatus('failed');
     }

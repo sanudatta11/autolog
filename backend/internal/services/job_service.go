@@ -180,7 +180,23 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	// Perform RCA analysis in chunks with error tracking
 	var failedChunk int = -1
 	var totalChunks int
-	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, job.Result["timeout"].(int))
+
+	// Safely convert timeout from interface{} to int
+	var timeout int
+	if timeoutVal, ok := job.Result["timeout"]; ok {
+		switch v := timeoutVal.(type) {
+		case int:
+			timeout = v
+		case float64:
+			timeout = int(v)
+		default:
+			timeout = 300 // default fallback
+		}
+	} else {
+		timeout = 300 // default fallback
+	}
+
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, timeout)
 	if err != nil {
 		logger.Error("RCA analysis failed", map[string]interface{}{"jobID": jobID, "error": err})
 		failMsg := err.Error()
