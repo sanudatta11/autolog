@@ -13,6 +13,7 @@ import (
 
 	"github.com/autolog/backend/internal/logger"
 	"github.com/autolog/backend/internal/models"
+	"golang.org/x/sync/semaphore"
 	"gorm.io/gorm"
 )
 
@@ -497,51 +498,51 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 
 	results := make([]*LogAnalysisResponse, len(chunks))
 	errs := make([]error, len(chunks))
+	var errsMutex sync.Mutex // Add mutex for thread-safe error writing
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, concurrency)
+	sem := semaphore.NewWeighted(int64(concurrency))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	for i, chunk := range chunks {
 		wg.Add(1)
+		if err := sem.Acquire(ctx, 1); err != nil {
+			wg.Done()
+			return nil, fmt.Errorf("failed to acquire semaphore: %w", err)
+		}
 		go func(idx int, chunk []models.LogEntry) {
 			defer wg.Done()
-			logger.Info("[RCA] Waiting for worker slot", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
-			sem <- struct{}{} // acquire
-			logger.Info("[RCA] Worker acquired", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
-			defer func() {
-				<-sem // release
-				logger.Info("[RCA] Worker released", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
-			}()
+			defer sem.Release(1)
 
 			var analysis *LogAnalysisResponse
 			var err error
 			for attempt := 1; attempt <= 3; attempt++ {
-				logger.Info("[RCA] Chunk analysis started", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt})
 				select {
 				case <-ctx.Done():
-					logger.Warn("[RCA] Chunk cancelled by context", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+					errsMutex.Lock()
 					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
+					errsMutex.Unlock()
 					return
 				case <-stopChan:
-					logger.Warn("[RCA] Chunk cancelled by stopChan", map[string]interface{}{"jobID": jobID, "chunk": idx + 1})
+					errsMutex.Lock()
 					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
+					errsMutex.Unlock()
 					return
 				default:
 				}
 				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext, timeout)
 				if err == nil {
-					logger.Info("[RCA] Chunk analysis completed", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt})
+					errsMutex.Lock()
 					results[idx] = analysis
+					errsMutex.Unlock()
 					return
 				}
-				logger.Warn("[RCA] Chunk analysis failed, retrying", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt, "error": err.Error()})
 				time.Sleep(500 * time.Millisecond)
 			}
-			logger.Error("[RCA] Chunk analysis failed after retries", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "error": err.Error()})
+			errsMutex.Lock()
 			errs[idx] = fmt.Errorf("chunk %d analysis failed after 3 retries: %w", idx+1, err)
-			// Cancel all other work if a chunk fails after retries
+			errsMutex.Unlock()
 			cancel()
 		}(i, chunk)
 	}
