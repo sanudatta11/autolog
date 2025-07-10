@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../services/api';
 
 const LLMAPICalls = () => {
   const [apiCalls, setApiCalls] = useState([]);
@@ -14,11 +14,7 @@ const LLMAPICalls = () => {
 
   const fetchAPICalls = async () => {
     try {
-      const response = await axios.get('/admin/llm-api-calls', {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
+      const response = await api.get('/admin/llm-api-calls');
       setApiCalls(response.data.apiCalls);
     } catch (error) {
       console.error('Failed to fetch API calls:', error);
@@ -31,11 +27,7 @@ const LLMAPICalls = () => {
     if (logFileDetails[logFileId]) return logFileDetails[logFileId];
     
     try {
-      const response = await axios.get(`/admin/log-files/${logFileId}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
+      const response = await api.get(`/admin/log-files/${logFileId}`);
       const details = response.data.logFile;
       setLogFileDetails(prev => ({ ...prev, [logFileId]: details }));
       return details;
@@ -49,11 +41,7 @@ const LLMAPICalls = () => {
     if (jobDetails[jobId]) return jobDetails[jobId];
     
     try {
-      const response = await axios.get(`/admin/jobs/${jobId}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
+      const response = await api.get(`/admin/jobs/${jobId}`);
       const details = response.data.job;
       setJobDetails(prev => ({ ...prev, [jobId]: details }));
       return details;
@@ -65,11 +53,7 @@ const LLMAPICalls = () => {
 
   const clearAPICalls = async () => {
     try {
-      await axios.delete('/admin/llm-api-calls', {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
+      await api.delete('/admin/llm-api-calls');
       setApiCalls([]);
     } catch (error) {
       console.error('Failed to clear API calls:', error);

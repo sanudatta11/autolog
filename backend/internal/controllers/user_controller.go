@@ -6,6 +6,7 @@ import (
 
 	"github.com/autolog/backend/internal/models"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -124,4 +125,93 @@ func (uc *UserController) GetUsers(c *gin.Context) {
 			"total": total,
 		},
 	})
+}
+
+type CreateUserRequest struct {
+	FirstName string `json:"firstName" binding:"required"`
+	LastName  string `json:"lastName" binding:"required"`
+	Email     string `json:"email" binding:"required,email"`
+	Password  string `json:"password" binding:"required,min=6"`
+	Role      string `json:"role" binding:"required"`
+}
+
+// Admin: Add a new user
+func (uc *UserController) AddUser(c *gin.Context) {
+	userRole, _ := c.Get("user_role")
+	if userRole != "ADMIN" && userRole != "MANAGER" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin or Manager access required"})
+		return
+	}
+
+	var req CreateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Managers can only create VIEWER, RESPONDER, and MANAGER roles
+	if userRole == "MANAGER" && req.Role == "ADMIN" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Managers cannot create admin users"})
+		return
+	}
+
+	// Check if user already exists
+	var existingUser models.User
+	if err := uc.db.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		return
+	}
+
+	user := models.User{
+		Email:     req.Email,
+		Password:  string(hashedPassword),
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Role:      req.Role,
+	}
+
+	if err := uc.db.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+		return
+	}
+
+	user.Password = ""
+	c.JSON(http.StatusCreated, user)
+}
+
+// Admin: Remove a user by ID
+func (uc *UserController) RemoveUser(c *gin.Context) {
+	userRole, _ := c.Get("user_role")
+	if userRole != "ADMIN" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	// Prevent admin from deleting themselves
+	userID, _ := c.Get("userID")
+	if uint(id) == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete your own account"})
+		return
+	}
+
+	if err := uc.db.Delete(&models.User{}, id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User deleted"})
 }

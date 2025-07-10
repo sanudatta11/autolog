@@ -81,6 +81,16 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				admin.DELETE("/llm-api-calls", logController.ClearLLMAPICalls)
 				admin.GET("/log-files/:id", logController.GetLogFileDetails)
 				admin.GET("/jobs/:id", logController.GetJobDetails)
+				// User management
+				admin.POST("/users", userController.AddUser)
+				admin.DELETE("/users/:id", userController.RemoveUser)
+			}
+
+			// Manager routes
+			manager := protected.Group("/manager")
+			{
+				// User management (add only, no delete)
+				manager.POST("/users", userController.AddUser)
 			}
 
 			// Log Analysis Memory Feedback

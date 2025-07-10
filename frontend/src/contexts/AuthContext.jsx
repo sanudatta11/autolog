@@ -17,7 +17,11 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('token')
-    if (token) {
+    const backendUrl = localStorage.getItem('backendUrl')
+    
+    if (token && backendUrl) {
+      // Update API base URL with stored backend URL
+      api.defaults.baseURL = backendUrl
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
       fetchCurrentUser(token)
     } else {
@@ -42,8 +46,11 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const login = async (email, password) => {
+  const login = async (email, password, backendUrl) => {
     try {
+      // Update API base URL with the provided backend URL
+      api.defaults.baseURL = backendUrl
+      
       const response = await api.post('/auth/login', { email, password })
       const { token, user } = response.data
       if (token) {
@@ -62,15 +69,16 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     localStorage.removeItem('token')
+    localStorage.removeItem('backendUrl')
     delete api.defaults.headers.common['Authorization']
     setUser(null)
   }
 
   const value = {
     user,
-    loading,
     login,
-    logout
+    logout,
+    loading
   }
 
   return (

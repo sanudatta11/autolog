@@ -1,20 +1,36 @@
 import axios from 'axios'
 
+// Get base URL from localStorage or fall back to environment variable or default
+const getBaseURL = () => {
+  const storedBackendUrl = localStorage.getItem('backendUrl')
+  if (storedBackendUrl) {
+    return storedBackendUrl
+  }
+  return import.meta.env.VITE_API_URL || 'https://backend.autolog.tech'
+}
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'https://backend.autolog.tech',
+  baseURL: getBaseURL(),
   headers: {
     'Content-Type': 'application/json',
   },
   withCredentials: true,
 })
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token and update base URL
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+    
+    // Update base URL for each request in case it changed
+    const currentBaseURL = getBaseURL()
+    if (config.baseURL !== currentBaseURL) {
+      config.baseURL = currentBaseURL
+    }
+    
     return config
   },
   (error) => {
@@ -28,11 +44,17 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
+      localStorage.removeItem('backendUrl')
       window.location.href = '/login'
     }
     return Promise.reject(error)
   }
 )
+
+// Function to update base URL (can be called from other components)
+export const updateApiBaseURL = (newBaseURL) => {
+  api.defaults.baseURL = newBaseURL
+}
 
 // Parsing Rules API
 export const parsingRulesAPI = {
@@ -56,6 +78,17 @@ export const parsingRulesAPI = {
   
   // Get active parsing rules
   getActiveParsingRules: () => api.get('/parsing-rules/active'),
+}
+
+// Admin User Management API
+export const adminUsersAPI = {
+  addAdminUser: (user) => api.post('/admin/users', user),
+  deleteAdminUser: (id) => api.delete(`/admin/users/${id}`),
+}
+
+// Manager User Management API
+export const managerUsersAPI = {
+  addManagerUser: (user) => api.post('/manager/users', user),
 }
 
 export default api 

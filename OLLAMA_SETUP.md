@@ -39,22 +39,22 @@ Use the management script to handle models:
 
 ```bash
 # Check current status
-./manage-ollama-models.sh status
+./scripts/manage-ollama-models.sh status
 
 # Pull required models for AutoLog
-./manage-ollama-models.sh setup
+./scripts/manage-ollama-models.sh setup
 
 # List installed models
-./manage-ollama-models.sh list
+./scripts/manage-ollama-models.sh list
 
 # Test a specific model
-./manage-ollama-models.sh test llama2:13b
+./scripts/manage-ollama-models.sh test llama2:13b
 
 # Pull additional models
-./manage-ollama-models.sh pull llama2:7b
+./scripts/manage-ollama-models.sh pull llama2:7b
 
 # Remove a model
-./manage-ollama-models.sh remove llama2:7b
+./scripts/manage-ollama-models.sh remove llama2:7b
 ```
 
 ## 📦 Required Models for AutoLog
@@ -160,19 +160,19 @@ curl -X POST https://autolog-test-ollama--spot.blackglacier-1f47edad.centralus.a
 1. **Models Not Found After Restart**
    ```bash
    # Check if volume is mounted correctly
-   ./manage-ollama-models.sh status
+   ./scripts/manage-ollama-models.sh status
    ```
 
 2. **Storage Full**
    ```bash
    # Remove unused models
-   ./manage-ollama-models.sh remove <model_name>
+   ./scripts/manage-ollama-models.sh remove <model_name>
    ```
 
 3. **Download Failures**
    ```bash
    # Retry with different model
-   ./manage-ollama-models.sh pull llama2:7b
+   ./scripts/manage-ollama-models.sh pull llama2:7b
    ```
 
 ### Logs

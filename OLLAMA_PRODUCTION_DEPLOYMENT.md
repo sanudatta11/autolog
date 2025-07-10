@@ -51,7 +51,7 @@ Choose your resource configuration:
 
 ```bash
 # For CI/CD pipelines or automation
-sudo ./deploy-ollama-production.sh --non-interactive
+sudo ./scripts/deploy-ollama-production.sh --non-interactive
 ```
 
 This uses the default balanced configuration (8GB RAM, 4 CPU cores).
@@ -60,10 +60,10 @@ This uses the default balanced configuration (8GB RAM, 4 CPU cores).
 
 ```bash
 # Check status
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 
 # Test models
-./manage-ollama-production.sh test
+./scripts/manage-ollama-production.sh test
 ```
 
 ## 📋 Prerequisites
@@ -163,61 +163,61 @@ The deployment script offers multiple resource configuration presets:
 ### Status and Health
 ```bash
 # Check overall status
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 
 # Show system information
-./manage-ollama-production.sh system
+./scripts/manage-ollama-production.sh system
 
 # Test all models
-./manage-ollama-production.sh test
+./scripts/manage-ollama-production.sh test
 ```
 
 ### Service Control
 ```bash
 # Start Ollama
-./manage-ollama-production.sh start
+./scripts/manage-ollama-production.sh start
 
 # Stop Ollama
-./manage-ollama-production.sh stop
+./scripts/manage-ollama-production.sh stop
 
 # Restart Ollama
-./manage-ollama-production.sh restart
+./scripts/manage-ollama-production.sh restart
 ```
 
 ### Logs and Monitoring
 ```bash
 # Follow container logs
-./manage-ollama-production.sh logs container
+./scripts/manage-ollama-production.sh logs container
 
 # Follow health check logs
-./manage-ollama-production.sh logs health
+./scripts/manage-ollama-production.sh logs health
 
 # Follow monitoring logs
-./manage-ollama-production.sh logs monitor
+./scripts/manage-ollama-production.sh logs monitor
 
 # Follow systemd service logs
-./manage-ollama-production.sh logs service
+./scripts/manage-ollama-production.sh logs service
 
 # Show available log types
-./manage-ollama-production.sh logs all
+./scripts/manage-ollama-production.sh logs all
 ```
 
 ### Model Management
 ```bash
 # Pull a new model
-./manage-ollama-production.sh pull llama2:7b
+./scripts/manage-ollama-production.sh pull llama2:7b
 
 # Remove a model
-./manage-ollama-production.sh remove llama2:7b
+./scripts/manage-ollama-production.sh remove llama2:7b
 
 # List installed models (via status command)
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 ```
 
 ### Cleanup
 ```bash
 # Remove Ollama completely (preserves model data)
-./manage-ollama-production.sh cleanup
+./scripts/manage-ollama-production.sh cleanup
 ```
 
 ## 🔗 API Endpoints
@@ -294,23 +294,23 @@ docker logs ollama-production
 systemctl status ollama
 
 # Check system resources
-./manage-ollama-production.sh system
+./scripts/manage-ollama-production.sh system
 
 # Check resource configuration
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 ```
 
 #### 2. Resource Configuration Issues
 ```bash
 # If you selected too many resources for your system
 # Check available resources
-./manage-ollama-production.sh system
+./scripts/manage-ollama-production.sh system
 
 # Restart with different configuration
 sudo ./deploy-ollama-production.sh
 
 # Or use non-interactive mode with default settings
-sudo ./deploy-ollama-production.sh --non-interactive
+sudo ./scripts/deploy-ollama-production.sh --non-interactive
 ```
 
 #### 3. Models Not Loading
@@ -319,11 +319,11 @@ sudo ./deploy-ollama-production.sh --non-interactive
 df -h /opt/ollama
 
 # Check model status
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 
 # Re-pull models if needed
-./manage-ollama-production.sh pull llama2:13b
-./manage-ollama-production.sh pull nomic-embed-text:latest
+./scripts/manage-ollama-production.sh pull llama2:13b
+./scripts/manage-ollama-production.sh pull nomic-embed-text:latest
 ```
 
 #### 4. API Not Responding
@@ -332,22 +332,22 @@ df -h /opt/ollama
 docker ps | grep ollama-production
 
 # Check health
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 
 # Restart if needed
-./manage-ollama-production.sh restart
+./scripts/manage-ollama-production.sh restart
 ```
 
 #### 5. High Resource Usage
 ```bash
 # Check resource usage
-./manage-ollama-production.sh status
+./scripts/manage-ollama-production.sh status
 
 # Monitor in real-time
 docker stats ollama-production
 
 # Consider reducing model size
-./manage-ollama-production.sh pull llama2:7b
+./scripts/manage-ollama-production.sh pull llama2:7b
 
 # Or redeploy with different resource configuration
 sudo ./deploy-ollama-production.sh
@@ -373,7 +373,7 @@ sudo ./deploy-ollama-production.sh
 
 #### Storage Optimization
 - Monitor disk usage: `df -h /opt/ollama`
-- Remove unused models: `./manage-ollama-production.sh remove <model>`
+- Remove unused models: ./scripts/manage-ollama-production.sh remove <model>
 - Use log rotation to manage log files
 
 ## 🔒 Security Considerations
@@ -445,7 +445,7 @@ curl http://localhost:80/api/tags
 
 #### Daily
 - Check health logs: `tail -f /var/log/ollama/health.log`
-- Monitor resource usage: `./manage-ollama-production.sh status`
+- Monitor resource usage: `./scripts/manage-ollama-production.sh status`
 
 #### Weekly
 - Review monitoring logs: `tail -f /var/log/ollama/monitor.log`
@@ -466,10 +466,10 @@ curl http://localhost:80/api/tags
 ## 🆘 Support
 
 ### Getting Help
-1. Check the status: `./manage-ollama-production.sh status`
-2. Review logs: `./manage-ollama-production.sh logs all`
-3. Check system resources: `./manage-ollama-production.sh system`
-4. Restart if needed: `./manage-ollama-production.sh restart`
+1. Check the status: `./scripts/manage-ollama-production.sh status`
+2. Review logs: `./scripts/manage-ollama-production.sh logs all`
+3. Check system resources: `./scripts/manage-ollama-production.sh system`
+4. Restart if needed: `./scripts/manage-ollama-production.sh restart`
 5. Redeploy with different configuration: `sudo ./deploy-ollama-production.sh`
 
 ### Resource Configuration Help
@@ -481,7 +481,7 @@ curl http://localhost:80/api/tags
 ### Useful Commands
 ```bash
 # Full system check
-./manage-ollama-production.sh status && ./manage-ollama-production.sh system
+./scripts/manage-ollama-production.sh status && ./scripts/manage-ollama-production.sh system
 
 # Quick health check
 curl -s http://localhost:80 > /dev/null && echo "Healthy" || echo "Unhealthy"
@@ -496,22 +496,22 @@ tail -f /var/log/ollama/health.log /var/log/ollama/monitor.log
 sudo ./deploy-ollama-production.sh
 
 # Non-interactive deployment (for automation)
-sudo ./deploy-ollama-production.sh --non-interactive
+sudo ./scripts/deploy-ollama-production.sh --non-interactive
 ```
 
 ### Resource Configuration Examples
 ```bash
 # For development/testing
-sudo ./deploy-ollama-production.sh  # Choose "Lightweight" option
+sudo ./scripts/deploy-ollama-production.sh  # Choose "Lightweight" option
 
 # For production with dedicated server
-sudo ./deploy-ollama-production.sh  # Choose "Full System Resources" option
+sudo ./scripts/deploy-ollama-production.sh  # Choose "Full System Resources" option
 
 # For shared server
-sudo ./deploy-ollama-production.sh  # Choose "Balanced" option
+sudo ./scripts/deploy-ollama-production.sh  # Choose "Balanced" option
 
 # For CI/CD automation
-sudo ./deploy-ollama-production.sh --non-interactive
+sudo ./scripts/deploy-ollama-production.sh --non-interactive
 ```
 
 ## 🎯 Key Features Summary

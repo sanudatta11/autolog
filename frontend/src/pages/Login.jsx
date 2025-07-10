@@ -1,22 +1,41 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
 function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [backendUrl, setBackendUrl] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   
   const { login } = useAuth()
   const navigate = useNavigate()
 
+  // Load backend URL from localStorage on component mount
+  useEffect(() => {
+    const savedBackendUrl = localStorage.getItem('backendUrl')
+    if (savedBackendUrl) {
+      setBackendUrl(savedBackendUrl)
+    }
+  }, [])
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setLoading(true)
 
-    const result = await login(email, password)
+    // Validate backend URL
+    if (!backendUrl.trim()) {
+      setError('Backend URL is required')
+      setLoading(false)
+      return
+    }
+
+    // Save backend URL to localStorage
+    localStorage.setItem('backendUrl', backendUrl.trim())
+
+    const result = await login(email, password, backendUrl.trim())
     
     if (result.success) {
       navigate('/')
@@ -48,6 +67,26 @@ function Login() {
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-4">
+            <div>
+              <label htmlFor="backendUrl" className="block text-sm font-medium text-gray-700">
+                Backend URL
+              </label>
+              <input
+                id="backendUrl"
+                name="backendUrl"
+                type="url"
+                autoComplete="off"
+                required
+                value={backendUrl}
+                onChange={(e) => setBackendUrl(e.target.value)}
+                className="input mt-1"
+                placeholder="https://your-backend-url.com"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Enter the URL of your AutoLog backend server
+              </p>
+            </div>
+
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700">
                 Email address
