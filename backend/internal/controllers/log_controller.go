@@ -558,10 +558,27 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 		return
 	}
 
-	// LLM health check before submitting RCA job
-	if err := lc.llmService.CheckLLMHealth(); err != nil {
-		logger.Error("LLM service is not available for RCA job submission", map[string]interface{}{"error": err})
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "LLM service is not available. Please try again later."})
+	// Get user's LLM endpoint
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Check if user has LLM endpoint configured
+	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		logEntry.Warn("User has no LLM endpoint configured for RCA job", map[string]interface{}{
+			"user_id": user.ID,
+		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "LLM endpoint not configured. Please configure your LLM endpoint in Settings before submitting RCA jobs."})
+		return
+	}
+
+	// LLM health check before submitting RCA job using user's endpoint
+	if err := lc.llmService.CheckLLMStatusWithEndpoint(*user.LLMEndpoint); err != nil {
+		logger.Error("LLM service is not available for RCA job submission", map[string]interface{}{"error": err, "user_endpoint": *user.LLMEndpoint})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "LLM service is not available. Please check your LLM endpoint configuration and try again."})
 		return
 	}
 
@@ -665,23 +682,50 @@ func (lc *LogController) GetDetailedErrorAnalysis(c *gin.Context) {
 
 // GetLLMStatus returns the status of the LLM service and available models
 func (lc *LogController) GetLLMStatus(c *gin.Context) {
-	_, exists := c.Get("userID")
+	userID, exists := c.Get("userID")
 	if !exists {
 		logger.Error("Unauthorized access attempt to get LLM status", nil)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	logEntry := logger.WithUser(0) // No user context for this endpoint
+	logEntry := logger.WithUser(userID.(uint))
 	logEntry.Debug("Get LLM status request received", map[string]interface{}{
 		"method": c.Request.Method,
 		"path":   c.Request.URL.Path,
 	})
 
-	// Check LLM health
-	healthError := lc.llmService.CheckLLMHealth()
+	// Get user's LLM endpoint
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
 
-	// Get available models
+	// Check if user has LLM endpoint configured
+	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		logEntry.Warn("User has no LLM endpoint configured", map[string]interface{}{
+			"user_id": user.ID,
+		})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "LLM endpoint not configured. Please configure your LLM endpoint in Settings.",
+			"status": "unconfigured",
+		})
+		return
+	}
+
+	// Check LLM health using user's endpoint
+	healthError := lc.llmService.CheckLLMStatusWithEndpoint(*user.LLMEndpoint)
+
+	// If healthy, update last status check
+	if healthError == nil {
+		now := time.Now()
+		user.LLMStatusCheckedAt = &now
+		lc.db.Save(&user)
+	}
+
+	// Get available models from user's endpoint
 	models, modelsError := lc.llmService.GetAvailableModels()
 
 	// Get current model configuration
@@ -693,21 +737,23 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 	}
 
 	logEntry.Info("LLM status retrieved successfully", map[string]interface{}{
-		"status":           status,
-		"health_error":     healthError,
-		"current_model":    currentModel,
-		"available_models": models,
-		"models_error":     modelsError,
-		"ollama_url":       os.Getenv("OLLAMA_URL"),
+		"status":            status,
+		"health_error":      healthError,
+		"current_model":     currentModel,
+		"available_models":  models,
+		"models_error":      modelsError,
+		"user_endpoint":     *user.LLMEndpoint,
+		"last_status_check": user.LLMStatusCheckedAt,
 	})
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":          status,
-		"healthError":     healthError,
-		"currentModel":    currentModel,
-		"availableModels": models,
-		"modelsError":     modelsError,
-		"ollamaUrl":       os.Getenv("OLLAMA_URL"),
+		"status":             status,
+		"healthError":        healthError,
+		"currentModel":       currentModel,
+		"availableModels":    models,
+		"modelsError":        modelsError,
+		"userEndpoint":       *user.LLMEndpoint,
+		"lastLLMStatusCheck": user.LLMStatusCheckedAt,
 	})
 }
 

@@ -29,6 +29,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 	logController := controllers.NewLogController(db, llmService, stopChan)
 	parsingRuleController := controllers.NewParsingRuleController(parsingRuleService)
 	learningController := controllers.NewLearningController(db, learningService)
+	settingsController := controllers.NewSettingsController(db)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -51,6 +52,13 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				users.GET("/me", userController.GetCurrentUser)
 				users.PUT("/me", userController.UpdateCurrentUser)
 				users.GET("", userController.GetUsers)
+			}
+
+			// Settings
+			settings := protected.Group("/settings")
+			{
+				settings.GET("/llm-endpoint", settingsController.GetLLMEndpoint)
+				settings.POST("/llm-endpoint", settingsController.UpdateLLMEndpoint)
 			}
 
 			// Logs

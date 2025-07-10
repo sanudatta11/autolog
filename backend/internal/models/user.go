@@ -14,15 +14,17 @@ const (
 )
 
 type User struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Email     string    `json:"email" gorm:"uniqueIndex;not null"`
-	Password  string    `json:"-" gorm:"not null"`
-	FirstName string    `json:"firstName" gorm:"not null"`
-	LastName  string    `json:"lastName" gorm:"not null"`
-	Role      string    `json:"role" gorm:"not null;default:'VIEWER'"`
-	Avatar    *string   `json:"avatar"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID                 uint       `json:"id" gorm:"primaryKey"`
+	Email              string     `json:"email" gorm:"uniqueIndex;not null"`
+	Password           string     `json:"-" gorm:"not null"`
+	FirstName          string     `json:"firstName" gorm:"not null"`
+	LastName           string     `json:"lastName" gorm:"not null"`
+	Role               string     `json:"role" gorm:"not null;default:'VIEWER'"`
+	Avatar             *string    `json:"avatar"`
+	LLMEndpoint        *string    `json:"llmEndpoint" gorm:"column:llm_endpoint"`
+	LLMStatusCheckedAt *time.Time `json:"llmStatusCheckedAt" gorm:"column:llm_status_checked_at"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
 	// DeletedAt gorm.DeletedAt `json:"-" gorm:"index"` // Temporarily disabled
 }
 

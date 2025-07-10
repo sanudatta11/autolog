@@ -21,6 +21,7 @@ function Layout() {
     { name: 'Parsing Rules', href: '/parsing-rules', icon: '⚙️' },
     { name: 'LLM Status', href: '/llm-status', icon: '🤖' },
     { name: 'Users', href: '/users', icon: '👥' },
+    { name: 'Settings', href: '/settings', icon: '⚙️' },
   ]
 
   // Add Feedback Review for admins

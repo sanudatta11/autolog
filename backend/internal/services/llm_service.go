@@ -126,6 +126,30 @@ func NewLLMService(baseURL, llmModel string) *LLMService {
 	}
 }
 
+// NewLLMServiceWithEndpoint creates a new LLM service with a specific endpoint
+func NewLLMServiceWithEndpoint(baseURL, llmModel string) *LLMService {
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+	if llmModel == "" {
+		llmModel = "llama2"
+	}
+
+	logger.Info("LLMService initialized with custom endpoint", map[string]interface{}{
+		"base_url":  baseURL,
+		"llm_model": llmModel,
+		"component": "llm_service",
+	})
+
+	return &LLMService{
+		baseURL:    baseURL,
+		llmModel:   llmModel,
+		embedModel: "llama2",
+		client:     &http.Client{Timeout: 300 * time.Second},
+		apiCalls:   make([]LLMAPICall, 0),
+	}
+}
+
 // GetAPICalls returns all tracked LLM API calls
 func (ls *LLMService) GetAPICalls() []LLMAPICall {
 	ls.callMutex.RLock()
@@ -660,6 +684,163 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 	return ollamaResp.Response, nil
 }
 
+// callLLMWithEndpoint makes an LLM call to a specific endpoint
+func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFileID *uint, jobID *uint, callType string) (string, error) {
+	startTime := time.Now()
+
+	request := OllamaGenerateRequest{
+		Model:  ls.llmModel,
+		Prompt: prompt,
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.2,
+			"top_p":       0.8,
+		},
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		ls.TrackAPICall(logFileID, jobID, callType, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/generate", endpoint)
+	logger.Debug("Making LLM request to custom endpoint", map[string]interface{}{
+		"url":           url,
+		"prompt_length": len(prompt),
+		"model":         ls.llmModel,
+		"call_type":     callType,
+	})
+
+	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt)}
+
+	resp, err := ls.client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	elapsed := time.Since(startTime)
+
+	if err != nil {
+		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
+			"elapsed": elapsed,
+		})
+		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
+		return "", fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	logger.Debug("LLM request completed", map[string]interface{}{
+		"elapsed":     elapsed,
+		"status_code": resp.StatusCode,
+	})
+
+	if resp.StatusCode != http.StatusOK {
+		var respBodyBytes []byte
+		respBodyBytes, _ = io.ReadAll(resp.Body)
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
+		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
+		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+	}
+
+	var ollamaResp OllamaGenerateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
+		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
+		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
+	}
+
+	logger.Debug("LLM response decoded successfully", map[string]interface{}{
+		"response_length": len(ollamaResp.Response),
+		"model":           ollamaResp.Model,
+	})
+
+	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+
+	return ollamaResp.Response, nil
+}
+
+// callLLMWithEndpointAndTimeout makes an LLM call to a specific endpoint with timeout
+func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint string, logFileID *uint, jobID *uint, callType string, timeout int) (string, error) {
+	startTime := time.Now()
+
+	request := OllamaGenerateRequest{
+		Model:  ls.llmModel,
+		Prompt: prompt,
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.2,
+			"top_p":       0.8,
+		},
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		ls.TrackAPICall(logFileID, jobID, callType, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/generate", endpoint)
+	logger.Debug("Making LLM request to custom endpoint with timeout", map[string]interface{}{
+		"url":           url,
+		"prompt_length": len(prompt),
+		"model":         ls.llmModel,
+		"call_type":     callType,
+		"timeout":       timeout,
+	})
+
+	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt), "timeout": timeout}
+
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	// Create request with context
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, time.Since(startTime), "", fmt.Sprintf("failed to create request: %v", err))
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ls.client.Do(req)
+	elapsed := time.Since(startTime)
+
+	if err != nil {
+		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
+			"elapsed": elapsed,
+		})
+		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
+		return "", fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	logger.Debug("LLM request completed", map[string]interface{}{
+		"elapsed":     elapsed,
+		"status_code": resp.StatusCode,
+	})
+
+	if resp.StatusCode != http.StatusOK {
+		var respBodyBytes []byte
+		respBodyBytes, _ = io.ReadAll(resp.Body)
+		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
+		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
+		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+	}
+
+	var ollamaResp OllamaGenerateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
+		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
+		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
+	}
+
+	logger.Debug("LLM response decoded successfully", map[string]interface{}{
+		"response_length": len(ollamaResp.Response),
+		"model":           ollamaResp.Model,
+	})
+
+	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+
+	return ollamaResp.Response, nil
+}
+
 // extractAndCleanJSON attempts to extract valid JSON from a potentially malformed response
 func (ls *LLMService) extractAndCleanJSON(response string) string {
 	response = strings.TrimSpace(response)
@@ -869,8 +1050,29 @@ func (ls *LLMService) extractErrorPattern(message string) string {
 	return "General Error"
 }
 
-// CheckLLMHealth verifies if the local LLM is available
-func (ls *LLMService) CheckLLMHealth() error {
+// CheckLLMStatus performs a lightweight health check (status endpoint)
+func (ls *LLMService) CheckLLMStatus() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/health", ls.baseURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create status check request: %w", err)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("LLM status check failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("LLM status check failed: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// CheckLLMGenerate verifies if the local LLM can generate (test prompt)
+func (ls *LLMService) CheckLLMGenerate() error {
 	// Use a simple health check prompt to verify LLM functionality
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -891,6 +1093,81 @@ func (ls *LLMService) CheckLLMHealth() error {
 	}
 
 	url := fmt.Sprintf("%s/api/generate", ls.baseURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create health check request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use a local client with a 3s timeout for health check only
+	healthClient := &http.Client{Timeout: 3 * time.Second}
+	resp, err := healthClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("LLM service not available: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var respBodyBytes []byte
+		respBodyBytes, _ = io.ReadAll(resp.Body)
+		return fmt.Errorf("LLM health check failed: status %d, body: %s", resp.StatusCode, string(respBodyBytes))
+	}
+
+	var ollamaResp OllamaGenerateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return fmt.Errorf("failed to decode LLM health check response: %w", err)
+	}
+
+	if strings.TrimSpace(ollamaResp.Response) != "OK" {
+		return fmt.Errorf("LLM health check did not return OK: %s", ollamaResp.Response)
+	}
+
+	return nil
+}
+
+// CheckLLMStatusWithEndpoint performs a lightweight health check for a specific endpoint
+func (ls *LLMService) CheckLLMStatusWithEndpoint(endpoint string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/health", endpoint)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create status check request: %w", err)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("LLM status check failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("LLM status check failed: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// CheckLLMGenerateWithEndpoint verifies if the LLM can generate for a specific endpoint
+func (ls *LLMService) CheckLLMGenerateWithEndpoint(endpoint string) error {
+	// Use a simple health check prompt to verify LLM functionality
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	request := OllamaGenerateRequest{
+		Model:  ls.llmModel,
+		Prompt: HEALTH_CHECK_PROMPT,
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.2,
+			"top_p":       0.8,
+		},
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal health check request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/generate", endpoint)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create health check request: %w", err)

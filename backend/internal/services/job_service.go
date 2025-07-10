@@ -148,10 +148,25 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	// Update progress
 	js.updateJobProgress(jobID, 20)
 
-	// Check LLM health before starting analysis
-	if err := js.llmService.CheckLLMHealth(); err != nil {
-		logger.Error("LLM health check failed", map[string]interface{}{"jobID": jobID, "error": err})
-		js.updateJobStatus(jobID, models.JobStatusFailed, fmt.Sprintf("LLM service unavailable: %v", err), nil)
+	// Get user's LLM endpoint from the log file's uploaded_by user
+	var user models.User
+	if err := js.db.First(&user, job.LogFile.UploadedBy).Error; err != nil {
+		logger.Error("Failed to get user for LLM endpoint", map[string]interface{}{"jobID": jobID, "userID": job.LogFile.UploadedBy, "error": err})
+		js.updateJobStatus(jobID, models.JobStatusFailed, "Failed to get user configuration", nil)
+		return
+	}
+
+	// Check if user has LLM endpoint configured
+	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		logger.Error("User has no LLM endpoint configured", map[string]interface{}{"jobID": jobID, "userID": user.ID})
+		js.updateJobStatus(jobID, models.JobStatusFailed, "LLM endpoint not configured for user", nil)
+		return
+	}
+
+	// Check LLM health before starting analysis using user's endpoint
+	if err := js.llmService.CheckLLMStatusWithEndpoint(*user.LLMEndpoint); err != nil {
+		logger.Error("LLM health check failed", map[string]interface{}{"jobID": jobID, "user_endpoint": *user.LLMEndpoint, "error": err})
+		js.updateJobStatus(jobID, models.JobStatusFailed, fmt.Sprintf("LLM service unavailable at %s: %v", *user.LLMEndpoint, err), nil)
 		return
 	}
 
@@ -165,7 +180,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	// Perform RCA analysis in chunks with error tracking
 	var failedChunk int = -1
 	var totalChunks int
-	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan)
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, job.Result["timeout"].(int))
 	if err != nil {
 		logger.Error("RCA analysis failed", map[string]interface{}{"jobID": jobID, "error": err})
 		failMsg := err.Error()
@@ -388,7 +403,7 @@ func getAvailableMemoryMB() int {
 	return int(sysinfo.Freeram / 1024 / 1024)
 }
 
-func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}) ([]*LogAnalysisResponse, error) {
+func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, timeout int) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("failed to load log entries: %w", err)
@@ -499,7 +514,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 					return
 				default:
 				}
-				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext)
+				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext, timeout)
 				if err == nil {
 					logger.Info("[RCA] Chunk analysis completed", map[string]interface{}{"jobID": jobID, "chunk": idx + 1, "attempt": attempt})
 					results[idx] = analysis
@@ -531,7 +546,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 }
 
 // analyzeChunkWithEnhancedContext analyzes a chunk with learning insights and feedback context
-func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string) (*LogAnalysisResponse, error) {
+func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string, timeout int) (*LogAnalysisResponse, error) {
 	// Filter only ERROR and FATAL entries for analysis
 	errorEntries := js.filterErrorEntries(entries)
 	if len(errorEntries) == 0 {
@@ -575,8 +590,18 @@ func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, e
 		prompt = js.llmService.createDetailedErrorAnalysisPrompt(request, errorEntries, "")
 	}
 
-	// Call LLM with the enhanced prompt
-	response, err := js.llmService.callLLMWithContext(prompt, &logFile.ID, &jobID, "rca_analysis_with_feedback")
+	// Get user's LLM endpoint
+	var user models.User
+	if err := js.db.First(&user, logFile.UploadedBy).Error; err != nil {
+		return nil, fmt.Errorf("failed to get user configuration: %w", err)
+	}
+
+	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		return nil, fmt.Errorf("user has no LLM endpoint configured")
+	}
+
+	// Call LLM with the enhanced prompt and timeout using user's endpoint
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, &jobID, "rca_analysis_with_feedback", timeout)
 	if err != nil {
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
@@ -628,8 +653,18 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 
 	prompt := js.llmService.CreateAggregationPrompt(logFile.Filename, summaryParts)
 
-	// Call LLM for aggregation
-	response, err := js.llmService.callLLMWithContext(prompt, &logFile.ID, nil, "rca_aggregation")
+	// Get user's LLM endpoint for aggregation
+	var user models.User
+	if err := js.db.First(&user, logFile.UploadedBy).Error; err != nil {
+		return nil, "", fmt.Errorf("failed to get user configuration for aggregation: %w", err)
+	}
+
+	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		return nil, "", fmt.Errorf("user has no LLM endpoint configured for aggregation")
+	}
+
+	// Call LLM for aggregation using user's endpoint
+	response, err := js.llmService.callLLMWithEndpoint(prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation")
 	if err != nil {
 		return nil, "", fmt.Errorf("LLM aggregation failed: %w", err)
 	}

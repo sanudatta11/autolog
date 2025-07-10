@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
 import LLMAPICalls from '../components/LLMAPICalls';
 
@@ -20,7 +21,12 @@ const LLMStatus = () => {
       setLlmStatus(response.data);
       setError(null);
     } catch (err) {
-      setError('Failed to fetch LLM status: ' + err.message);
+      if (err.response?.status === 400 && err.response?.data?.status === 'unconfigured') {
+        setError('LLM endpoint not configured');
+        setLlmStatus({ status: 'unconfigured', error: err.response.data.error });
+      } else {
+        setError('Failed to fetch LLM status: ' + err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -30,6 +36,7 @@ const LLMStatus = () => {
     switch (status) {
       case 'healthy': return 'text-green-600';
       case 'unhealthy': return 'text-red-600';
+      case 'unconfigured': return 'text-yellow-600';
       default: return 'text-gray-600';
     }
   };
@@ -38,6 +45,7 @@ const LLMStatus = () => {
     switch (status) {
       case 'healthy': return '🟢';
       case 'unhealthy': return '🔴';
+      case 'unconfigured': return '🟡';
       default: return '⚪';
     }
   };
@@ -50,7 +58,58 @@ const LLMStatus = () => {
     );
   }
 
-  if (error) {
+  // Show configuration prompt if LLM endpoint is not configured
+  if (llmStatus?.status === 'unconfigured') {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-3xl font-bold">LLM Service Status</h1>
+          <button
+            onClick={fetchLLMStatus}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
+          <div className="flex items-center space-x-3 mb-4">
+            <span className="text-2xl">🟡</span>
+            <h2 className="text-xl font-semibold text-yellow-800">LLM Endpoint Not Configured</h2>
+          </div>
+          <p className="text-yellow-700 mb-4">
+            {llmStatus.error || 'You need to configure your LLM endpoint before using LLM features.'}
+          </p>
+          <div className="flex space-x-4">
+            <Link
+              to="/settings"
+              className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700"
+            >
+              Configure LLM Endpoint
+            </Link>
+            <button
+              onClick={fetchLLMStatus}
+              className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
+            >
+              Check Again
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 rounded-lg p-6">
+          <h3 className="text-lg font-semibold mb-3">How to Configure LLM Endpoint</h3>
+          <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+            <li>Go to <Link to="/settings" className="text-blue-600 hover:underline">Settings</Link></li>
+            <li>Enter your LLM service URL (e.g., Ollama server address)</li>
+            <li>Save the configuration</li>
+            <li>Return to this page to check the status</li>
+          </ol>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && llmStatus?.status !== 'unconfigured') {
     return (
       <div className="container mx-auto px-4 py-8">
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
@@ -86,8 +145,13 @@ const LLMStatus = () => {
             </div>
           </div>
           <div>
-            <div className="font-medium">Ollama URL</div>
-            <div className="text-sm text-gray-600">{llmStatus.ollamaUrl}</div>
+            <div className="font-medium">User Endpoint</div>
+            <div className="text-sm text-gray-600">{llmStatus.userEndpoint}</div>
+            {llmStatus.lastLLMStatusCheck && (
+              <div className="text-xs text-gray-500 mt-1">
+                Last successful check: {new Date(llmStatus.lastLLMStatusCheck).toLocaleString()}
+              </div>
+            )}
           </div>
         </div>
         
@@ -155,10 +219,10 @@ const LLMStatus = () => {
         </p>
         <div className="bg-gray-800 text-green-400 p-4 rounded font-mono text-sm">
           <div># Install popular models for better analysis:</div>
-                          <div>docker exec autolog-ollama ollama pull llama2:13b</div>
-                <div>docker exec autolog-ollama ollama pull mistral:7b</div>
-                <div>docker exec autolog-ollama ollama pull codellama:7b</div>
-                <div>docker exec autolog-ollama ollama pull neural-chat:7b</div>
+          <div>docker exec autolog-ollama ollama pull llama2:13b</div>
+          <div>docker exec autolog-ollama ollama pull mistral:7b</div>
+          <div>docker exec autolog-ollama ollama pull codellama:7b</div>
+          <div>docker exec autolog-ollama ollama pull neural-chat:7b</div>
         </div>
         <p className="text-xs text-gray-600 mt-2">
           Note: Larger models provide better analysis but require more memory and processing time.
