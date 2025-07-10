@@ -1121,7 +1121,17 @@ const Logs = () => {
                                   <tr key={idx} className="border-b">
                                     <td className="px-2 py-1 border font-mono">{err.errorPattern}</td>
                                     <td className="px-2 py-1 border text-center">{err.errorCount}</td>
-                                    <td className={`px-2 py-1 border text-center ${err.severity === 'critical' ? 'text-red-700' : 'text-yellow-700'}`}>{err.severity}</td>
+                                    <td className="px-2 py-1 border text-center">
+  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+    err.severity === 'critical' ? 'bg-red-100 text-red-800' :
+    err.severity === 'high' ? 'bg-orange-200 text-orange-900' :
+    err.severity === 'medium' ? 'bg-yellow-100 text-yellow-900' :
+    err.severity === 'low' ? 'bg-green-100 text-green-900' :
+    'bg-blue-100 text-blue-900'
+  }`}>
+    {err.severity}
+  </span>
+</td>
                                     <td className="px-2 py-1 border font-mono">{err.firstOccurrence}</td>
                                     <td className="px-2 py-1 border font-mono">{err.lastOccurrence}</td>
                                     <td className="px-2 py-1 border">{err.rootCause}</td>
