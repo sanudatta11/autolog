@@ -10,6 +10,11 @@ import (
 // CustomLoggerMiddleware creates a custom logging middleware that logs HTTP requests in simple text format
 func CustomLoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Skip logging for /health endpoint
+		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/api/health" {
+			c.Next()
+			return
+		}
 		// Start timer
 		start := time.Now()
 
