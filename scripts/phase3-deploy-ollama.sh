@@ -47,7 +47,7 @@ cd ..
 
 # Load variables from terraform.tfvars
 ENVIRONMENT=$(grep 'environment' terraform/terraform.tfvars | cut -d'"' -f2 || echo "dev")
-OLLAMA_MODEL=$(grep 'ollama_model' terraform/terraform.tfvars | cut -d'"' -f2 || echo "llama2:13b")
+OLLAMA_MODEL=$(grep 'ollama_model' terraform/terraform.tfvars | cut -d'"' -f2 || echo "llama3:8b")
 OLLAMA_EMBED_MODEL=$(grep 'ollama_embed_model' terraform/terraform.tfvars | cut -d'"' -f2 || echo "nomic-embed-text:latest")
 
 print_status "Environment: $ENVIRONMENT"

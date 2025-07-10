@@ -205,10 +205,10 @@ The deployment script offers multiple resource configuration presets:
 ### Model Management
 ```bash
 # Pull a new model
-./scripts/manage-ollama-production.sh pull llama2:7b
+./scripts/manage-ollama-production.sh pull llama3:8b
 
 # Remove a model
-./scripts/manage-ollama-production.sh remove llama2:7b
+./scripts/manage-ollama-production.sh remove llama3:8b
 
 # List installed models (via status command)
 ./scripts/manage-ollama-production.sh status
@@ -242,7 +242,7 @@ http://localhost:80
 curl -X POST http://localhost:80/api/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama2:13b",
+    "model": "llama3:8b",
     "prompt": "Explain log analysis in one sentence.",
     "stream": false
   }'
@@ -322,7 +322,7 @@ df -h /opt/ollama
 ./scripts/manage-ollama-production.sh status
 
 # Re-pull models if needed
-./scripts/manage-ollama-production.sh pull llama2:13b
+./scripts/manage-ollama-production.sh pull llama3:8b
 ./scripts/manage-ollama-production.sh pull nomic-embed-text:latest
 ```
 
@@ -347,7 +347,7 @@ docker ps | grep ollama-production
 docker stats ollama-production
 
 # Consider reducing model size
-./scripts/manage-ollama-production.sh pull llama2:7b
+./scripts/manage-ollama-production.sh pull llama3:8b
 
 # Or redeploy with different resource configuration
 sudo ./deploy-ollama-production.sh
@@ -362,7 +362,7 @@ sudo ./deploy-ollama-production.sh
 - **For production**: Use "High Performance" or "Full System Resources"
 
 #### Memory Optimization
-- Use smaller models for testing (`llama2:7b` instead of `llama2:13b`)
+- Use smaller models for testing (`llama3:8b` instead of `llama3:70b`)
 - Monitor memory usage with `docker stats`
 - Redeploy with different memory configuration if needed
 

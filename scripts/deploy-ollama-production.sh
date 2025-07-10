@@ -4,7 +4,7 @@
 # This script deploys a production-grade Ollama instance with:
 # - Systemd service for auto-restart
 # - Docker container with persistent storage
-# - Required models (llama2:13b and nomic-embed-text:latest)
+# - Required models (llama3:8b and nomic-embed-text:latest)
 # - Health monitoring and logging
 # - All endpoints exposed on port 80
 # - Configurable resource limits or full resource utilization

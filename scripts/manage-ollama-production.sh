@@ -465,7 +465,7 @@ test_backend_apis() {
     if ! pull_response=$(curl -s -X POST "$OLLAMA_URL/api/pull" \
         -H "Content-Type: application/json" \
         --max-time 10 \
-        -d '{"name": "llama2:7b"}' 2>/dev/null); then
+        -d '{"name": "llama3:8b"}' 2>/dev/null); then
         error "❌ Model Pull API - Failed"
         all_passed=false
     elif echo "$pull_response" | jq -e '.status' > /dev/null 2>&1; then
@@ -885,7 +885,7 @@ main() {
             echo "  $0 http://your-server:80 status  # Check remote status"
             echo "  $0 http://192.168.1.100:80 test  # Test remote models"
             echo "  $0 http://192.168.1.100:80 test-apis  # Test remote backend APIs"
-            echo "  $0 https://ollama.example.com pull llama2:7b  # Pull model on remote server"
+            echo "  $0 https://ollama.example.com pull llama3:8b  # Pull model on remote server"
             echo "  $0 logs container         # Follow local container logs"
             echo "  $0 test                   # Test local models"
             echo "  $0 test-apis              # Test all backend APIs"

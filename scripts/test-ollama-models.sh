@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test script for Ollama models in Azure Container Apps
-# This script tests both llama2:13b and nomic-embed-text models
+# This script tests both llama3:8b and nomic-embed-text models
 
 OLLAMA_URL="https://autolog-test-ollama--spot.blackglacier-1f47edad.centralus.azurecontainerapps.io"
 
@@ -25,22 +25,22 @@ echo ""
 echo "2. Listing available models..."
 curl -s "$OLLAMA_URL/api/tags" | jq -r '.models[] | "📦 \(.name) (\(.size))"'
 
-# Test 3: Test LLaMA model (llama2:13b)
+# Test 3: Test LLaMA model (llama3:8b)
 echo ""
-echo "3. Testing CodeLlama model (codellama:7b)..."
+echo "3. Testing LLaMA model (llama3:8b)..."
 LLAMA_RESPONSE=$(curl -s -X POST "$OLLAMA_URL/api/generate" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "codellama:7b",
+    "model": "llama3:8b",
     "prompt": "Explain what log analysis is in one sentence.",
     "stream": false
   }')
 
 if echo "$LLAMA_RESPONSE" | jq -e '.response' > /dev/null; then
-    echo "✅ CodeLlama model is working"
+    echo "✅ LLaMA model is working"
     echo "📝 Response: $(echo "$LLAMA_RESPONSE" | jq -r '.response')"
 else
-    echo "❌ CodeLlama model test failed"
+    echo "❌ LLaMA model test failed"
     echo "Response: $LLAMA_RESPONSE"
 fi
 
@@ -67,5 +67,5 @@ echo ""
 echo "🎉 Ollama model testing complete!"
 echo ""
 echo "Your models are ready for use in AutoLog:"
-echo "• llama2:13b - For log analysis and text generation"
+echo "• llama3:8b - For log analysis and text generation"
 echo "• nomic-embed-text - For text embeddings and similarity search" 

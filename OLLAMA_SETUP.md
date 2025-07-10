@@ -48,13 +48,13 @@ Use the management script to handle models:
 ./scripts/manage-ollama-models.sh list
 
 # Test a specific model
-./scripts/manage-ollama-models.sh test llama2:13b
+./scripts/manage-ollama-models.sh test llama3:8b
 
 # Pull additional models
-./scripts/manage-ollama-models.sh pull llama2:7b
+./scripts/manage-ollama-models.sh pull llama3:8b
 
 # Remove a model
-./scripts/manage-ollama-models.sh remove llama2:7b
+./scripts/manage-ollama-models.sh remove llama3:8b
 ```
 
 ## 📦 Required Models for AutoLog
@@ -72,8 +72,8 @@ Use the management script to handle models:
    - Vector similarity operations
 
 ### Optional Models
-- **llama2:7b** (4.1 GB) - Smaller, faster alternative
-- **llama2:13b** (7.4 GB) - Larger, more capable model
+- **llama3:8b** (4.7 GB) - Default model for log analysis
+- **llama3:70b** (40 GB) - Larger, more capable model
 - **mistral:7b** (4.1 GB) - High-performance alternative
 
 ## 🔧 Configuration
@@ -172,7 +172,7 @@ curl -X POST https://autolog-test-ollama--spot.blackglacier-1f47edad.centralus.a
 3. **Download Failures**
    ```bash
    # Retry with different model
-   ./scripts/manage-ollama-models.sh pull llama2:7b
+   ./scripts/manage-ollama-models.sh pull llama3:8b
    ```
 
 ### Logs

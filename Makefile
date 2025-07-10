@@ -19,7 +19,7 @@ help: ## Show this help message
 	@echo "  setup-ollama     Setup Ollama for local LLM functionality"
 	@echo "  setup-full       Complete setup including Ollama LLM"
 	@echo "  ollama-status    Check Ollama service status"
-	@echo "  ollama-pull      Pull default LLM model (llama2)"
+	@echo "  ollama-pull      Pull default LLM model (llama3:8b)"
 	@echo ""
 	@echo "📊 Monitoring Commands:"
 	@echo "  logs             Show Docker logs"
@@ -159,11 +159,11 @@ ollama-status: ## Check Ollama service status
 		echo "💡 Run 'make setup-ollama' to install and start Ollama"; \
 	fi
 
-ollama-pull: ## Pull default LLM model (llama2)
-	@echo "📥 Pulling Llama2 model for AI analysis..."
+ollama-pull: ## Pull default LLM model (llama3:8b)
+	@echo "📥 Pulling Llama3:8b model for AI analysis..."
 	@if command -v ollama > /dev/null; then \
-		ollama pull llama2; \
-		echo "✅ Llama2 model ready for use"; \
+		ollama pull llama3:8b; \
+		echo "✅ Llama3:8b model ready for use"; \
 	else \
 		echo "❌ Ollama not found. Run 'make setup-ollama' first"; \
 	fi

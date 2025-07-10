@@ -128,7 +128,7 @@ case "${1:-help}" in
     "pull")
         if [ -z "$2" ]; then
             echo "Usage: $0 pull <model_name>"
-            echo "Example: $0 pull llama2:13b"
+            echo "Example: $0 pull llama3:8b"
             exit 1
         fi
         if check_ollama; then
@@ -138,7 +138,7 @@ case "${1:-help}" in
     "remove")
         if [ -z "$2" ]; then
             echo "Usage: $0 remove <model_name>"
-            echo "Example: $0 remove llama2:13b"
+            echo "Example: $0 remove llama3:8b"
             exit 1
         fi
         if check_ollama; then
@@ -148,7 +148,7 @@ case "${1:-help}" in
     "test")
         if [ -z "$2" ]; then
             echo "Usage: $0 test <model_name>"
-            echo "Example: $0 test llama2:13b"
+            echo "Example: $0 test llama3:8b"
             exit 1
         fi
         if check_ollama; then
@@ -163,7 +163,7 @@ case "${1:-help}" in
             list_models
             echo ""
             echo "📥 Setting up LLaMA model..."
-            pull_model "llama2:13b"
+            pull_model "llama3:8b"
             echo ""
             echo "📥 Setting up text embedding model..."
             pull_model "nomic-embed-text:latest"
@@ -210,7 +210,7 @@ case "${1:-help}" in
         echo ""
         echo "Commands:"
         echo "  list                    - List all installed models"
-        echo "  pull <model_name>       - Pull a model (e.g., llama2:13b)"
+        echo "  pull <model_name>       - Pull a model (e.g., llama3:8b)"
         echo "  remove <model_name>     - Remove a model"
         echo "  test <model_name>       - Test a model with a simple prompt"
         echo "  setup                   - Pull required models for AutoLog"
@@ -220,7 +220,7 @@ case "${1:-help}" in
         echo "Examples:"
         echo "  $0 setup                # Pull required models"
         echo "  $0 list                 # List current models"
-        echo "  $0 test llama2:13b      # Test LLaMA model"
-        echo "  $0 pull llama2:7b       # Pull smaller LLaMA model"
+        echo "  $0 test llama3:8b      # Test LLaMA model"
+        echo "  $0 pull llama3:8b       # Pull default LLaMA model"
         ;;
 esac 
