@@ -50,19 +50,21 @@ func (js *JobService) filterErrorEntries(entries []models.LogEntry) []models.Log
 
 // CreateRCAAnalysisJob creates a new RCA analysis job
 func (js *JobService) CreateRCAAnalysisJob(logFileID uint) (*models.Job, error) {
-	return js.CreateRCAAnalysisJobWithOptions(logFileID, 300, true) // Default timeout 300s, chunking enabled
+	return js.CreateRCAAnalysisJobWithOptions(logFileID, 300, true, true, "") // Default timeout 300s, chunking enabled, smart chunking enabled, default model
 }
 
 // CreateRCAAnalysisJobWithOptions creates a new RCA analysis job with custom options
-func (js *JobService) CreateRCAAnalysisJobWithOptions(logFileID uint, timeout int, chunking bool) (*models.Job, error) {
+func (js *JobService) CreateRCAAnalysisJobWithOptions(logFileID uint, timeout int, chunking bool, smartChunking bool, model string) (*models.Job, error) {
 	job := &models.Job{
 		Type:      "rca_analysis",
 		LogFileID: logFileID,
 		Status:    models.JobStatusPending,
 		Progress:  0,
 		Result: map[string]interface{}{
-			"timeout":  timeout,
-			"chunking": chunking,
+			"timeout":       timeout,
+			"chunking":      chunking,
+			"smartChunking": smartChunking,
+			"model":         model, // Add model to job result
 		},
 	}
 
@@ -79,10 +81,12 @@ func (js *JobService) CreateRCAAnalysisJobWithOptions(logFileID uint, timeout in
 	}
 
 	logger.Info("RCA analysis job created with options", map[string]interface{}{
-		"jobID":     job.ID,
-		"logFileID": logFileID,
-		"timeout":   timeout,
-		"chunking":  chunking,
+		"jobID":         job.ID,
+		"logFileID":     logFileID,
+		"timeout":       timeout,
+		"chunking":      chunking,
+		"smartChunking": smartChunking,
+		"model":         model,
 	})
 
 	return job, nil
@@ -92,8 +96,12 @@ func (js *JobService) CreateRCAAnalysisJobWithOptions(logFileID uint, timeout in
 func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-chan struct{}) {
 	completed := false
 	var logFileID *uint // Track logFileID for deferred error handling
+
+	logger.Info("[RCA] Starting RCA analysis job", map[string]interface{}{"jobID": jobID})
+
 	defer func() {
 		if !completed {
+			logger.Error("[RCA] Job failed due to shutdown or unexpected exit", map[string]interface{}{"jobID": jobID})
 			js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 				"status":        models.JobStatusFailed,
 				"error":         "Job failed due to shutdown or unexpected exit",
@@ -116,6 +124,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		logger.Error("Failed to update job status to running", map[string]interface{}{"jobID": jobID, "error": err})
 		return
 	}
+	logger.Info("[RCA] Job status updated to running", map[string]interface{}{"jobID": jobID, "progress": 10})
 
 	// Get job details
 	var job models.Job
@@ -131,17 +140,27 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		return
 	}
 	logFileID = &job.LogFileID
+	logger.Info("[RCA] Job details retrieved", map[string]interface{}{
+		"jobID":     jobID,
+		"logFileID": job.LogFileID,
+		"filename":  job.LogFile.Filename,
+	})
 
 	// Check for shutdown before starting
 	select {
 	case <-stopChan:
+		logger.Info("[RCA] Job cancelled before starting analysis", map[string]interface{}{"jobID": jobID})
 		return
 	default:
 	}
 
 	// Check if RCA is possible for this log file
 	if job.LogFile != nil && !job.LogFile.IsRCAPossible {
-		logger.Info("RCA not possible for this log file, completing job with no RCA needed", map[string]interface{}{"jobID": jobID, "logFileID": job.LogFileID, "reason": job.LogFile.RCANotPossibleReason})
+		logger.Info("RCA not possible for this log file, completing job with no RCA needed", map[string]interface{}{
+			"jobID":     jobID,
+			"logFileID": job.LogFileID,
+			"reason":    job.LogFile.RCANotPossibleReason,
+		})
 		js.completeJobWithNoRCANeeded(jobID, job.LogFileID, job.LogFile.RCANotPossibleReason)
 		completed = true
 		return
@@ -149,6 +168,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 
 	// Update progress
 	js.updateJobProgress(jobID, 20)
+	logger.Info("[RCA] Starting user configuration check", map[string]interface{}{"jobID": jobID, "progress": 20})
 
 	// Get user's LLM endpoint from the log file's uploaded_by user
 	var user models.User
@@ -157,6 +177,11 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		js.updateJobStatus(jobID, models.JobStatusFailed, "Failed to get user configuration", nil)
 		return
 	}
+	logger.Info("[RCA] User configuration retrieved", map[string]interface{}{
+		"jobID":       jobID,
+		"userID":      user.ID,
+		"hasEndpoint": user.LLMEndpoint != nil && *user.LLMEndpoint != "",
+	})
 
 	// Check if user has LLM endpoint configured
 	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
@@ -166,15 +191,18 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	}
 
 	// Check LLM health before starting analysis using user's endpoint
+	logger.Info("[RCA] Checking LLM health", map[string]interface{}{"jobID": jobID, "endpoint": *user.LLMEndpoint})
 	if err := js.llmService.CheckLLMStatusWithEndpoint(*user.LLMEndpoint); err != nil {
 		logger.Error("LLM health check failed", map[string]interface{}{"jobID": jobID, "user_endpoint": *user.LLMEndpoint, "error": err})
 		js.updateJobStatus(jobID, models.JobStatusFailed, fmt.Sprintf("LLM service unavailable at %s: %v", *user.LLMEndpoint, err), nil)
 		return
 	}
+	logger.Info("[RCA] LLM health check passed", map[string]interface{}{"jobID": jobID, "endpoint": *user.LLMEndpoint})
 
 	// Check for shutdown before analysis
 	select {
 	case <-stopChan:
+		logger.Info("[RCA] Job cancelled before starting analysis", map[string]interface{}{"jobID": jobID})
 		return
 	default:
 	}
@@ -182,6 +210,8 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	// Perform RCA analysis in chunks with error tracking
 	var failedChunk int = -1
 	var totalChunks int
+
+	logger.Info("[RCA] Starting chunk analysis preparation", map[string]interface{}{"jobID": jobID})
 
 	// Safely convert timeout from interface{} to int
 	var timeout int
@@ -198,7 +228,37 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		timeout = 300 // default fallback
 	}
 
-	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, timeout, true)
+	// Safely convert smartChunking from interface{} to bool
+	var smartChunking bool = true // default to true
+	if smartChunkingVal, ok := job.Result["smartChunking"]; ok {
+		switch v := smartChunkingVal.(type) {
+		case bool:
+			smartChunking = v
+		default:
+			smartChunking = true // default fallback
+		}
+	}
+
+	// Safely extract model from interface{} to string
+	var selectedModel string = "" // default to empty string (will use default model)
+	if modelVal, ok := job.Result["model"]; ok {
+		switch v := modelVal.(type) {
+		case string:
+			selectedModel = v
+		default:
+			selectedModel = "" // default fallback
+		}
+	}
+
+	logger.Info("[RCA] Analysis parameters configured", map[string]interface{}{
+		"jobID":         jobID,
+		"timeout":       timeout,
+		"smartChunking": smartChunking,
+		"model":         selectedModel,
+	})
+
+	logger.Info("[RCA] Starting chunk analysis", map[string]interface{}{"jobID": jobID})
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, timeout, smartChunking, selectedModel)
 	if err != nil {
 		logger.Error("RCA analysis failed", map[string]interface{}{"jobID": jobID, "error": err})
 		failMsg := err.Error()
@@ -217,6 +277,13 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
 		return
 	}
+
+	logger.Info("[RCA] Chunk analysis completed successfully", map[string]interface{}{
+		"jobID":       jobID,
+		"totalChunks": totalChunks,
+		"partials":    len(partials),
+	})
+
 	js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", totalChunks)
 
 	// Store partial results in job.Result
@@ -226,14 +293,21 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("result", result).Error; err != nil {
 		logger.Error("Failed to store partial RCA results", map[string]interface{}{"jobID": jobID, "error": err})
 	}
+	logger.Info("[RCA] Partial results stored", map[string]interface{}{"jobID": jobID, "partialsCount": len(partials)})
 
 	// Update progress after each chunk
 	for i := range partials {
 		progress := 20 + int(float64(i+1)/float64(len(partials))*60) // 20-80%
 		js.updateJobProgress(jobID, progress)
+		logger.Info("[RCA] Chunk progress updated", map[string]interface{}{
+			"jobID":    jobID,
+			"chunk":    i + 1,
+			"progress": progress,
+		})
 		// Check for shutdown between chunks
 		select {
 		case <-stopChan:
+			logger.Info("[RCA] Job cancelled during chunk processing", map[string]interface{}{"jobID": jobID})
 			return
 		default:
 		}
@@ -241,16 +315,19 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 
 	// (Aggregation step)
 	js.updateJobProgress(jobID, 85)
+	logger.Info("[RCA] Starting aggregation phase", map[string]interface{}{"jobID": jobID, "progress": 85})
 
 	// Check for shutdown before aggregation
 	select {
 	case <-stopChan:
+		logger.Info("[RCA] Job cancelled before aggregation", map[string]interface{}{"jobID": jobID})
 		return
 	default:
 	}
 
 	// Aggregate partials into a final RCA report using LLM
 	var rawLLMResponse string
+	logger.Info("[RCA] Calling LLM for aggregation", map[string]interface{}{"jobID": jobID})
 	aggregated, rawResp, err := js.aggregatePartialAnalysesWithRaw(job.LogFile, partials, timeout)
 	if err != nil {
 		logger.Error("RCA aggregation failed", map[string]interface{}{"jobID": jobID, "error": err})
@@ -258,7 +335,10 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
 		return
 	}
-	logger.Info("[RCA] Raw LLM aggregation response", map[string]interface{}{"jobID": jobID, "response": rawResp})
+	logger.Info("[RCA] LLM aggregation completed successfully", map[string]interface{}{
+		"jobID":    jobID,
+		"response": rawResp,
+	})
 	rawLLMResponse = rawResp
 
 	// Store final RCA in job.Result
@@ -278,17 +358,21 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		logger.Error("Failed to update job completion", map[string]interface{}{"jobID": jobID, "error": err})
 		return
 	}
+	logger.Info("[RCA] Job marked as completed", map[string]interface{}{"jobID": jobID, "progress": 100})
 
 	// Update log file status
 	if err := js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "completed").Error; err != nil {
 		logger.Error("Failed to update log file status", map[string]interface{}{"jobID": job.LogFileID, "error": err})
 	}
+	logger.Info("[RCA] Log file status updated to completed", map[string]interface{}{"jobID": jobID, "logFileID": job.LogFileID})
 
 	// Save LogAnalysis and LogAnalysisMemory
+	logger.Info("[RCA] Saving analysis and memory records", map[string]interface{}{"jobID": jobID})
 	js.saveAnalysisAndMemory(jobID, job.LogFile, aggregated)
 
 	// Learn from the completed analysis
 	if js.learningService != nil {
+		logger.Info("[RCA] Starting learning from analysis", map[string]interface{}{"jobID": jobID})
 		if err := js.learningService.LearnFromAnalysis(job.LogFile, aggregated); err != nil {
 			logger.Error("Failed to learn from RCA analysis", map[string]interface{}{"jobID": jobID, "error": err})
 		} else {
@@ -297,10 +381,17 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 				"logFileID": job.LogFile.ID,
 			})
 		}
+	} else {
+		logger.Info("[RCA] Learning service not available, skipping learning", map[string]interface{}{"jobID": jobID})
 	}
 
 	completed = true
-	logger.Info("[ProcessRCAAnalysisJobWithShutdown] RCA analysis completed for job", map[string]interface{}{"jobID": jobID})
+	logger.Info("[RCA] RCA analysis completed successfully", map[string]interface{}{
+		"jobID":       jobID,
+		"totalChunks": totalChunks,
+		"partials":    len(partials),
+		"duration":    time.Since(now),
+	})
 }
 
 // completeJobWithNoRCANeeded handles the case where RCA is not needed
@@ -424,17 +515,38 @@ func getAvailableMemoryMB() int {
 	return int(sysinfo.Freeram / 1024 / 1024)
 }
 
-func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, timeout int, smartChunking bool) ([]*LogAnalysisResponse, error) {
+func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, timeout int, smartChunking bool, model string) ([]*LogAnalysisResponse, error) {
+	logger.Info("[RCA] Starting chunk analysis preparation", map[string]interface{}{
+		"jobID":         jobID,
+		"logFileID":     logFile.ID,
+		"filename":      logFile.Filename,
+		"smartChunking": smartChunking,
+		"timeout":       timeout,
+	})
+
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
+		logger.Error("[RCA] Failed to load log entries", map[string]interface{}{"jobID": jobID, "error": err})
 		return nil, fmt.Errorf("failed to load log entries: %w", err)
 	}
 	if len(entries) == 0 {
+		logger.Error("[RCA] No log entries found for analysis", map[string]interface{}{"jobID": jobID})
 		return nil, fmt.Errorf("no log entries found for analysis")
 	}
 
+	logger.Info("[RCA] Log entries loaded", map[string]interface{}{
+		"jobID":        jobID,
+		"totalEntries": len(entries),
+	})
+
 	// Get learning insights for better analysis
 	errorEntries := js.filterErrorEntries(entries)
+	logger.Info("[RCA] Error entries filtered", map[string]interface{}{
+		"jobID":        jobID,
+		"errorEntries": len(errorEntries),
+		"totalEntries": len(entries),
+	})
+
 	learningInsights, err := js.learningService.GetLearningInsights(logFile, errorEntries)
 	if err != nil {
 		logger.Warn("[RCA] Failed to get learning insights, proceeding without them", map[string]interface{}{"jobID": jobID, "error": err})
@@ -457,13 +569,20 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 				"jobID":                 jobID,
 				"feedbackContextLength": len(feedbackContext),
 			})
+		} else {
+			logger.Info("[RCA] No feedback context available", map[string]interface{}{"jobID": jobID})
 		}
+	} else {
+		logger.Info("[RCA] Feedback service not available", map[string]interface{}{"jobID": jobID})
 	}
 
+	// Declare chunks and chunkIndices variables at function scope
+	var chunks [][]models.LogEntry
+	var chunkIndices []int
+
 	if smartChunking {
+		logger.Info("[RCA] Using smart chunking strategy", map[string]interface{}{"jobID": jobID})
 		// Smart chunking: Only create chunks that contain ERROR or FATAL entries
-		var chunks [][]models.LogEntry
-		var chunkIndices []int // Track which original chunk index each error chunk represents
 		var currentChunkIndex int
 
 		for i := 0; i < len(entries); i += 25 { // Reduced from 100 to 25 for faster fail/succeed
@@ -535,9 +654,9 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 			})
 		}
 	} else {
+		logger.Info("[RCA] Using regular chunking strategy", map[string]interface{}{"jobID": jobID})
 		// Regular chunking: include all chunks regardless of error level
 		chunkSize := 25
-		var chunks [][]models.LogEntry
 		for i := 0; i < len(entries); i += chunkSize {
 			end := i + chunkSize
 			if end > len(entries) {
@@ -546,6 +665,12 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 			chunks = append(chunks, entries[i:end])
 		}
 		*totalChunks = len(chunks)
+
+		// Initialize chunkIndices for regular chunking (sequential)
+		chunkIndices = make([]int, len(chunks))
+		for i := range chunkIndices {
+			chunkIndices[i] = i
+		}
 
 		// Log regular chunking statistics
 		logger.Info("[RCA] Regular chunking completed", map[string]interface{}{
@@ -584,7 +709,22 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	if concurrency > *totalChunks {
 		concurrency = *totalChunks
 	}
-	logger.Info("[RCA] Dynamic concurrency calculation", map[string]interface{}{"cpuLimit": cpuLimit, "memLimit": memLimit, "finalConcurrency": concurrency, "availableMB": memMB, "maxProcs": maxProcs, "totalChunks": *totalChunks})
+	logger.Info("[RCA] Dynamic concurrency calculation", map[string]interface{}{
+		"jobID":            jobID,
+		"cpuLimit":         cpuLimit,
+		"memLimit":         memLimit,
+		"finalConcurrency": concurrency,
+		"availableMB":      memMB,
+		"maxProcs":         maxProcs,
+		"totalChunks":      *totalChunks,
+	})
+
+	logger.Info("[RCA] Starting parallel chunk processing", map[string]interface{}{
+		"jobID":       jobID,
+		"totalChunks": *totalChunks,
+		"concurrency": concurrency,
+		"timeout":     timeout,
+	})
 
 	results := make([]*LogAnalysisResponse, *totalChunks)
 	errs := make([]error, *totalChunks)
@@ -599,6 +739,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		wg.Add(1)
 		if err := sem.Acquire(ctx, 1); err != nil {
 			wg.Done()
+			logger.Error("[RCA] Failed to acquire semaphore", map[string]interface{}{"jobID": jobID, "error": err})
 			return nil, fmt.Errorf("failed to acquire semaphore: %w", err)
 		}
 
@@ -613,6 +754,13 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 			})
 		}
 
+		logger.Info("[RCA] Starting chunk processing", map[string]interface{}{
+			"jobID":       jobID,
+			"chunkIndex":  i + 1,
+			"totalChunks": *totalChunks,
+			"chunkSize":   len(chunks[i]),
+		})
+
 		go func(idx int, chunk []models.LogEntry, originalChunkIdx int) {
 			defer wg.Done()
 			defer sem.Release(1)
@@ -622,32 +770,69 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 			for attempt := 1; attempt <= 3; attempt++ {
 				select {
 				case <-ctx.Done():
+					logger.Info("[RCA] Chunk cancelled during processing", map[string]interface{}{
+						"jobID":      jobID,
+						"chunkIndex": originalChunkIdx + 1,
+					})
 					errsMutex.Lock()
 					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
 					errsMutex.Unlock()
 					return
 				case <-stopChan:
+					logger.Info("[RCA] Chunk cancelled due to shutdown", map[string]interface{}{
+						"jobID":      jobID,
+						"chunkIndex": originalChunkIdx + 1,
+					})
 					errsMutex.Lock()
 					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
 					errsMutex.Unlock()
 					return
 				default:
 				}
-				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext, timeout)
+
+				logger.Info("[RCA] Processing chunk attempt", map[string]interface{}{
+					"jobID":      jobID,
+					"chunkIndex": originalChunkIdx + 1,
+					"attempt":    attempt,
+				})
+
+				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext, timeout, model)
 				if err == nil {
+					logger.Info("[RCA] Chunk processed successfully", map[string]interface{}{
+						"jobID":      jobID,
+						"chunkIndex": originalChunkIdx + 1,
+						"attempt":    attempt,
+					})
 					errsMutex.Lock()
 					results[idx] = analysis
 					errsMutex.Unlock()
 					return
 				}
+
+				logger.Warn("[RCA] Chunk processing failed, retrying", map[string]interface{}{
+					"jobID":      jobID,
+					"chunkIndex": originalChunkIdx + 1,
+					"attempt":    attempt,
+					"error":      err.Error(),
+				})
+
 				time.Sleep(500 * time.Millisecond)
 			}
+
+			logger.Error("[RCA] Chunk processing failed after all retries", map[string]interface{}{
+				"jobID":      jobID,
+				"chunkIndex": originalChunkIdx + 1,
+				"error":      err.Error(),
+			})
+
 			errsMutex.Lock()
 			errs[idx] = fmt.Errorf("chunk %d analysis failed after 3 retries: %w", originalChunkIdx+1, err)
 			errsMutex.Unlock()
 			cancel()
 		}(i, chunks[i], i) // Pass the original chunk index
 	}
+
+	logger.Info("[RCA] Waiting for all chunks to complete", map[string]interface{}{"jobID": jobID})
 	wg.Wait()
 
 	// Check for errors and aggregate results
@@ -666,11 +851,17 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		partialResults = append(partialResults, res)
 	}
 
+	logger.Info("[RCA] All chunks processed successfully", map[string]interface{}{
+		"jobID":          jobID,
+		"totalChunks":    *totalChunks,
+		"partialResults": len(partialResults),
+	})
+
 	return partialResults, nil
 }
 
 // analyzeChunkWithEnhancedContext analyzes a chunk with learning insights and feedback context
-func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string, timeout int) (*LogAnalysisResponse, error) {
+func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string, timeout int, model string) (*LogAnalysisResponse, error) {
 	// Filter only ERROR and FATAL entries for analysis
 	errorEntries := js.filterErrorEntries(entries)
 	if len(errorEntries) == 0 {
@@ -723,9 +914,9 @@ func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, e
 	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
 		return nil, fmt.Errorf("user has no LLM endpoint configured")
 	}
-
+	fmt.Println("[LLM] Starting LLM call with prompt", prompt)
 	// Call LLM with the enhanced prompt and timeout using user's endpoint
-	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, &jobID, "rca_analysis_with_feedback", timeout)
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, &jobID, "rca_analysis_with_feedback", timeout, model)
 	if err != nil {
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
@@ -741,7 +932,15 @@ func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, e
 
 // aggregatePartialAnalysesWithRaw aggregates chunk results into a final RCA report using the LLM
 func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, partials []*LogAnalysisResponse, timeout int) (*LogAnalysisResponse, string, error) {
+	logger.Info("[RCA] Starting aggregation of partial analyses", map[string]interface{}{
+		"logFileID": logFile.ID,
+		"filename":  logFile.Filename,
+		"partials":  len(partials),
+		"timeout":   timeout,
+	})
+
 	if len(partials) == 0 {
+		logger.Error("[RCA] No partial analyses to aggregate", map[string]interface{}{"logFileID": logFile.ID})
 		return nil, "", fmt.Errorf("no partial analyses to aggregate")
 	}
 
@@ -756,7 +955,10 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 
 	// If all chunks found no errors, return a consolidated "no errors" analysis
 	if allNoErrors {
-		logger.Info("[RCA] All chunks found no errors, returning consolidated no-errors analysis", nil)
+		logger.Info("[RCA] All chunks found no errors, returning consolidated no-errors analysis", map[string]interface{}{
+			"logFileID": logFile.ID,
+			"partials":  len(partials),
+		})
 		noErrorsAnalysis := &LogAnalysisResponse{
 			Summary:           fmt.Sprintf("Log file '%s' contains no ERROR or FATAL entries across all analyzed chunks. System appears to be functioning normally.", logFile.Filename),
 			Severity:          "low",
@@ -769,6 +971,11 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 		return noErrorsAnalysis, "No errors found - consolidated analysis", nil
 	}
 
+	logger.Info("[RCA] Preparing aggregation prompt", map[string]interface{}{
+		"logFileID": logFile.ID,
+		"partials":  len(partials),
+	})
+
 	// Prepare aggregation prompt using the constant
 	summaryParts := []string{}
 	for i, p := range partials {
@@ -776,47 +983,104 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 	}
 
 	prompt := js.llmService.CreateAggregationPrompt(logFile.Filename, summaryParts)
+	logger.Info("[RCA] Aggregation prompt created", map[string]interface{}{
+		"logFileID":    logFile.ID,
+		"promptLength": len(prompt),
+		"summaryParts": len(summaryParts),
+	})
 
 	// Get user's LLM endpoint for aggregation
 	var user models.User
 	if err := js.db.First(&user, logFile.UploadedBy).Error; err != nil {
+		logger.Error("[RCA] Failed to get user configuration for aggregation", map[string]interface{}{
+			"logFileID": logFile.ID,
+			"userID":    logFile.UploadedBy,
+			"error":     err,
+		})
 		return nil, "", fmt.Errorf("failed to get user configuration for aggregation: %w", err)
 	}
 
 	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		logger.Error("[RCA] User has no LLM endpoint configured for aggregation", map[string]interface{}{
+			"logFileID": logFile.ID,
+			"userID":    user.ID,
+		})
 		return nil, "", fmt.Errorf("user has no LLM endpoint configured for aggregation")
 	}
 
+	logger.Info("[RCA] Calling LLM for aggregation", map[string]interface{}{
+		"logFileID": logFile.ID,
+		"endpoint":  *user.LLMEndpoint,
+		"timeout":   timeout,
+	})
+
 	// Call LLM for aggregation using user's endpoint with timeout
-	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout)
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout, "")
 	if err != nil {
+		logger.Error("[RCA] LLM aggregation failed", map[string]interface{}{
+			"logFileID": logFile.ID,
+			"endpoint":  *user.LLMEndpoint,
+			"error":     err,
+		})
 		return nil, "", fmt.Errorf("LLM aggregation failed: %w", err)
 	}
 
+	logger.Info("[RCA] LLM aggregation response received", map[string]interface{}{
+		"logFileID":      logFile.ID,
+		"responseLength": len(response),
+	})
+
 	// Clean and parse the response
+	logger.Info("[RCA] Cleaning and parsing LLM response", map[string]interface{}{"logFileID": logFile.ID})
 	cleanResponse := js.extractJSONFromResponse(response)
 	var aggregated LogAnalysisResponse
 	if err := json.Unmarshal([]byte(cleanResponse), &aggregated); err != nil {
-		logger.Error("[RCA] LLM aggregation response parsing failed", map[string]interface{}{"error": err})
+		logger.Error("[RCA] LLM aggregation response parsing failed", map[string]interface{}{
+			"logFileID": logFile.ID,
+			"error":     err,
+		})
 		logger.Info("[RCA] Raw LLM response", map[string]interface{}{"response": response})
 		logger.Info("[RCA] Cleaned response", map[string]interface{}{"response": cleanResponse})
 
 		// Try alternative parsing method
+		logger.Info("[RCA] Trying alternative parsing method", map[string]interface{}{"logFileID": logFile.ID})
 		alternativeAnalysis, err := js.parseAlternativeLLMResponse(cleanResponse, partials)
 		if err != nil {
+			logger.Error("[RCA] Alternative parsing also failed", map[string]interface{}{
+				"logFileID": logFile.ID,
+				"error":     err,
+			})
 			return nil, response, fmt.Errorf("failed to parse LLM aggregation response: %w", err)
 		}
 
 		if alternativeAnalysis.Summary == "" || alternativeAnalysis.RootCause == "" {
+			logger.Error("[RCA] Alternative parsing returned incomplete analysis", map[string]interface{}{
+				"logFileID": logFile.ID,
+			})
 			return nil, response, fmt.Errorf("LLM aggregation returned incomplete analysis")
 		}
+
+		logger.Info("[RCA] Alternative parsing successful", map[string]interface{}{
+			"logFileID": logFile.ID,
+			"summary":   alternativeAnalysis.Summary,
+		})
 
 		return alternativeAnalysis, response, nil
 	}
 
 	if aggregated.Summary == "" || aggregated.RootCause == "" {
+		logger.Error("[RCA] Standard parsing returned incomplete analysis", map[string]interface{}{
+			"logFileID": logFile.ID,
+		})
 		return nil, response, fmt.Errorf("LLM aggregation returned incomplete analysis")
 	}
+
+	logger.Info("[RCA] Aggregation completed successfully", map[string]interface{}{
+		"logFileID": logFile.ID,
+		"summary":   aggregated.Summary,
+		"severity":  aggregated.Severity,
+		"rootCause": aggregated.RootCause,
+	})
 
 	return &aggregated, response, nil
 }

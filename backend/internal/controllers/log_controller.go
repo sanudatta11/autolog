@@ -538,9 +538,10 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 
 	// Parse options from request body
 	type AnalyzeOptions struct {
-		Timeout       int  `json:"timeout"`
-		Chunking      bool `json:"chunking"`
-		SmartChunking bool `json:"smartChunking"`
+		Timeout       int    `json:"timeout"`
+		Chunking      bool   `json:"chunking"`
+		SmartChunking bool   `json:"smartChunking"`
+		Model         string `json:"model"` // New field for model selection
 	}
 	var opts AnalyzeOptions
 	if err := c.ShouldBindJSON(&opts); err != nil {
@@ -548,6 +549,7 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 		opts.Timeout = 300
 		opts.Chunking = true
 		opts.SmartChunking = true // default to smart chunking enabled
+		opts.Model = ""           // will be set to default model later
 	}
 
 	// Enforce required fields and valid values
@@ -608,7 +610,7 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 	}
 
 	// Create and process RCA job with options
-	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking, opts.SmartChunking)
+	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking, opts.SmartChunking, opts.Model)
 	if err != nil {
 		logger.WithError(err, "log_controller").Error("Failed to create RCA analysis job", map[string]interface{}{
 			"log_file_id": logFile.ID,
@@ -792,6 +794,63 @@ func (lc *LogController) GetLLMStatus(c *gin.Context) {
 		"modelsError":        modelsErrorStr,
 		"userEndpoint":       *user.LLMEndpoint,
 		"lastLLMStatusCheck": user.LLMStatusCheckedAt,
+	})
+}
+
+// GetAvailableModels returns available models for the current user's LLM endpoint
+func (lc *LogController) GetAvailableModels(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		logger.Error("Unauthorized access attempt to get available models", nil)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	logEntry := logger.WithUser(userID.(uint))
+	logEntry.Debug("Get available models request received", map[string]interface{}{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	})
+
+	// Get user's LLM endpoint
+	var user models.User
+	if err := lc.db.First(&user, userID).Error; err != nil {
+		logger.WithError(err, "log_controller").Error("User not found")
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Check if user has LLM endpoint configured
+	if user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		logEntry.Warn("User has no LLM endpoint configured", map[string]interface{}{
+			"user_id": user.ID,
+		})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "LLM endpoint not configured. Please configure your LLM endpoint in Settings.",
+			"status": "unconfigured",
+		})
+		return
+	}
+
+	// Get available models from user's endpoint
+	models, err := lc.llmService.GetAvailableModelsWithEndpoint(*user.LLMEndpoint)
+	if err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to get available models", map[string]interface{}{
+			"user_endpoint": *user.LLMEndpoint,
+		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get available models: %v", err)})
+		return
+	}
+
+	logEntry.Info("Available models retrieved successfully", map[string]interface{}{
+		"user_id":         user.ID,
+		"endpoint":        *user.LLMEndpoint,
+		"availableModels": len(models),
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"models":   models,
+		"endpoint": *user.LLMEndpoint,
 	})
 }
 

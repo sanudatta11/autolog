@@ -51,6 +51,9 @@ const Logs = () => {
   const [rcaTimeout, setRcaTimeout] = useState(300);
   const [rcaChunking, setRcaChunking] = useState(true);
   const [rcaError, setRcaError] = useState('');
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [loadingModels, setLoadingModels] = useState(false);
 
   const [uploadLimit, setUploadLimit] = useState(5 * 1024 * 1024); // Default 5MB
 
@@ -238,12 +241,29 @@ const Logs = () => {
   };
 
   // Show RCA modal instead of direct analyze
-  const openRcaModal = (logFileId) => {
+  const openRcaModal = async (logFileId) => {
     setRcaTargetLogFileId(logFileId);
     setRcaTimeout(300);
     setRcaChunking(true);
     setRcaError('');
+    setSelectedModel('');
     setRcaModalOpen(true);
+    
+    // Fetch available models
+    setLoadingModels(true);
+    try {
+      const response = await api.get('/logs/available-models');
+      setAvailableModels(response.data.models || []);
+      // Set the first model as default if available
+      if (response.data.models && response.data.models.length > 0) {
+        setSelectedModel(response.data.models[0]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch available models:', error);
+      setAvailableModels([]);
+    } finally {
+      setLoadingModels(false);
+    }
   };
 
   // New handler for RCA with options
@@ -258,6 +278,7 @@ const Logs = () => {
       const response = await api.post(`/logs/${rcaTargetLogFileId}/analyze`, {
         timeout: Number(rcaTimeout),
         chunking: rcaChunking,
+        model: selectedModel, // Include selected model
       });
       const msg = response.data && response.data.message
         ? response.data.message
@@ -1374,6 +1395,32 @@ const Logs = () => {
             <h2 className="text-lg font-semibold mb-4">RCA Analysis Options</h2>
             <div className="space-y-4">
               <div>
+                <label className="block text-sm font-medium mb-1">LLM Model <span className="text-red-500">*</span></label>
+                {loadingModels ? (
+                  <div className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span className="text-sm text-gray-600">Loading models...</span>
+                  </div>
+                ) : (
+                  <select
+                    className="input mt-1 w-full"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    required
+                  >
+                    <option value="">Select a model</option>
+                    {availableModels.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {availableModels.length === 0 && !loadingModels && (
+                  <p className="text-sm text-red-600 mt-1">No models available. Please check your LLM endpoint configuration.</p>
+                )}
+              </div>
+              <div>
                 <label className="block text-sm font-medium mb-1">LLM Timeout (seconds) <span className="text-red-500">*</span></label>
                 <input
                   type="number"
@@ -1418,6 +1465,7 @@ const Logs = () => {
                 <button
                   onClick={handleRcaProceed}
                   className="bg-primary-600 text-white px-4 py-2 rounded hover:bg-primary-700"
+                  disabled={!selectedModel || loadingModels}
                 >
                   Proceed
                 </button>

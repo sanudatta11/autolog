@@ -17,7 +17,7 @@ func main() {
 
 	// Test health check
 	fmt.Println("1. Testing health check...")
-	if err := llmService.CheckLLMHealth(); err != nil {
+	if err := llmService.CheckLLMStatus(); err != nil {
 		log.Printf("Health check failed: %v", err)
 	} else {
 		fmt.Println("✅ Health check passed")

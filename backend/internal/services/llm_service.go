@@ -757,11 +757,17 @@ func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFil
 }
 
 // callLLMWithEndpointAndTimeout makes an LLM call to a specific endpoint with timeout
-func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint string, logFileID *uint, jobID *uint, callType string, timeout int) (string, error) {
+func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint string, logFileID *uint, jobID *uint, callType string, timeout int, model string) (string, error) {
 	startTime := time.Now()
 
+	// Use the provided model if specified, otherwise use the default model
+	selectedModel := model
+	if selectedModel == "" {
+		selectedModel = ls.llmModel
+	}
+
 	request := OllamaGenerateRequest{
-		Model:  ls.llmModel,
+		Model:  selectedModel,
 		Prompt: prompt,
 		Stream: false,
 		Options: map[string]interface{}{
@@ -780,7 +786,7 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint stri
 	logger.Debug("Making LLM request to custom endpoint with timeout", map[string]interface{}{
 		"url":           url,
 		"prompt_length": len(prompt),
-		"model":         ls.llmModel,
+		"model":         selectedModel,
 		"call_type":     callType,
 		"timeout":       timeout,
 	})

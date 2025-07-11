@@ -417,6 +417,14 @@ function UserManagement() {
   const [addSuccess, setAddSuccess] = useState('')
   const { user } = useAuth()
   const [deleteError, setDeleteError] = useState('')
+  
+  // Role change state
+  const [showRoleModal, setShowRoleModal] = useState(false)
+  const [selectedUser, setSelectedUser] = useState(null)
+  const [newRole, setNewRole] = useState('')
+  const [roleChangeLoading, setRoleChangeLoading] = useState(false)
+  const [roleChangeError, setRoleChangeError] = useState('')
+  const [roleChangeSuccess, setRoleChangeSuccess] = useState('')
 
   React.useEffect(() => {
     fetchUsers()
@@ -469,6 +477,33 @@ function UserManagement() {
     }
   }
 
+  const handleRoleChange = async (e) => {
+    e.preventDefault()
+    setRoleChangeLoading(true)
+    setRoleChangeError('')
+    setRoleChangeSuccess('')
+    try {
+      await adminUsersAPI.updateUserRole(selectedUser.id, newRole)
+      setRoleChangeSuccess('User role updated successfully!')
+      setShowRoleModal(false)
+      setSelectedUser(null)
+      setNewRole('')
+      fetchUsers()
+    } catch (err) {
+      setRoleChangeError(err.response?.data?.error || 'Failed to update user role')
+    } finally {
+      setRoleChangeLoading(false)
+    }
+  }
+
+  const openRoleModal = (userItem) => {
+    setSelectedUser(userItem)
+    setNewRole(userItem.role)
+    setShowRoleModal(true)
+    setRoleChangeError('')
+    setRoleChangeSuccess('')
+  }
+
   const getRoleColor = (role) => {
     switch (role) {
       case 'ADMIN': return 'bg-red-100 text-red-800'
@@ -484,6 +519,9 @@ function UserManagement() {
   
   // Check if user can delete users (admin only)
   const canDeleteUsers = user?.role === 'ADMIN'
+  
+  // Check if user can change roles (admin only)
+  const canChangeRoles = user?.role === 'ADMIN'
 
   // Count number of admins
   const adminCount = users.filter(u => u.role === 'ADMIN').length
@@ -548,7 +586,7 @@ function UserManagement() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Created
                   </th>
-                  {canDeleteUsers && (
+                  {(canDeleteUsers || canChangeRoles) && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
                     </th>
@@ -561,6 +599,8 @@ function UserManagement() {
                   const isAdmin = userItem.role === 'ADMIN'
                   // Only allow delete if not current user, and if admin, only if more than 1 admin
                   const canDeleteThisUser = canDeleteUsers && !isCurrentUser && (!isAdmin || adminCount > 1)
+                  // Only allow role change if not current user
+                  const canChangeThisUserRole = canChangeRoles && !isCurrentUser
                   return (
                     <tr key={userItem.id}>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -579,16 +619,27 @@ function UserManagement() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {new Date(userItem.createdAt).toLocaleDateString()}
                       </td>
-                      {canDeleteUsers && (
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <button
-                            onClick={() => canDeleteThisUser ? handleDeleteUser(userItem.id) : null}
-                            className={`text-red-600 hover:text-red-900 ${!canDeleteThisUser ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            disabled={!canDeleteThisUser}
-                            title={isCurrentUser ? 'You cannot delete your own account' : (isAdmin && adminCount <= 1 ? 'At least one admin must remain' : 'Delete user')}
-                          >
-                            Delete
-                          </button>
+                      {(canDeleteUsers || canChangeRoles) && (
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                          {canChangeThisUserRole && (
+                            <button
+                              onClick={() => openRoleModal(userItem)}
+                              className="text-blue-600 hover:text-blue-900"
+                              title="Change role"
+                            >
+                              Change Role
+                            </button>
+                          )}
+                          {canDeleteUsers && (
+                            <button
+                              onClick={() => canDeleteThisUser ? handleDeleteUser(userItem.id) : null}
+                              className={`text-red-600 hover:text-red-900 ${!canDeleteThisUser ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              disabled={!canDeleteThisUser}
+                              title={isCurrentUser ? 'You cannot delete your own account' : (isAdmin && adminCount <= 1 ? 'At least one admin must remain' : 'Delete user')}
+                            >
+                              Delete
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -710,6 +761,71 @@ function UserManagement() {
                   disabled={addLoading}
                 >
                   {addLoading ? 'Adding...' : 'Add User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Role Change Modal */}
+      {showRoleModal && selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Change Role for {selectedUser.firstName} {selectedUser.lastName}</h3>
+              <button
+                onClick={() => setShowRoleModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleRoleChange} className="space-y-4">
+              {roleChangeError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                  {roleChangeError}
+                </div>
+              )}
+              {roleChangeSuccess && (
+                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
+                  {roleChangeSuccess}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  New Role
+                </label>
+                <select
+                  className="input w-full"
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                >
+                  <option value="VIEWER">Viewer</option>
+                  <option value="RESPONDER">Responder</option>
+                  {user?.role === 'ADMIN' && <option value="MANAGER">Manager</option>}
+                  {user?.role === 'ADMIN' && <option value="ADMIN">Admin</option>}
+                </select>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowRoleModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 border border-transparent rounded-md hover:bg-primary-700 disabled:opacity-50"
+                  disabled={roleChangeLoading}
+                >
+                  {roleChangeLoading ? 'Changing...' : 'Change Role'}
                 </button>
               </div>
             </form>

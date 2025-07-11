@@ -85,6 +85,7 @@ export const parsingRulesAPI = {
 export const adminUsersAPI = {
   addAdminUser: (user) => api.post('/admin/users', user),
   deleteAdminUser: (id) => api.delete(`/admin/users/${id}`),
+  updateUserRole: (id, role) => api.put(`/admin/users/${id}/role`, { role }),
 }
 
 // Manager User Management API

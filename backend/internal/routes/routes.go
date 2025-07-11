@@ -76,6 +76,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				logs.DELETE("/:id", logController.DeleteLogFile)
 				logs.GET("", logController.GetLogFiles)
 				r.GET("/logs/:logFileId/jobs", logController.GetAllRCAJobs)
+				logs.GET("/available-models", logController.GetAvailableModels)
 			}
 
 			// RCA Jobs
@@ -95,6 +96,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				// User management
 				admin.POST("/users", userController.AddUser)
 				admin.DELETE("/users/:id", userController.RemoveUser)
+				admin.PUT("/users/:id/role", userController.UpdateUserRole)
 			}
 
 			// Manager routes

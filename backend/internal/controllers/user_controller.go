@@ -24,6 +24,10 @@ type UpdateUserRequest struct {
 	Email     string `json:"email"`
 }
 
+type UpdateUserRoleRequest struct {
+	Role string `json:"role" binding:"required"`
+}
+
 func (uc *UserController) GetCurrentUser(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
@@ -234,4 +238,86 @@ func (uc *UserController) RemoveUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "User deleted"})
+}
+
+// Admin: Update user role
+func (uc *UserController) UpdateUserRole(c *gin.Context) {
+	userRole, _ := c.Get("user_role")
+	if userRole != "ADMIN" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var req UpdateUserRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate role
+	validRoles := []string{"ADMIN", "MANAGER", "RESPONDER", "VIEWER"}
+	isValidRole := false
+	for _, role := range validRoles {
+		if req.Role == role {
+			isValidRole = true
+			break
+		}
+	}
+	if !isValidRole {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be one of: ADMIN, MANAGER, RESPONDER, VIEWER"})
+		return
+	}
+
+	// Prevent admin from changing their own role
+	userID, _ := c.Get("userID")
+	if uint(id) == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot change your own role"})
+		return
+	}
+
+	// Find the user to update
+	var user models.User
+	if err := uc.db.First(&user, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+		}
+		return
+	}
+
+	// If changing from ADMIN to non-ADMIN, check if this would leave no admins
+	if user.Role == "ADMIN" && req.Role != "ADMIN" {
+		var adminCount int64
+		if err := uc.db.Model(&models.User{}).Where("role = ?", "ADMIN").Count(&adminCount).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check admin count"})
+			return
+		}
+		if adminCount <= 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot change role. At least one admin must remain in the system"})
+			return
+		}
+	}
+
+	// Update the role
+	user.Role = req.Role
+	if err := uc.db.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user role"})
+		return
+	}
+
+	// Clear password from response
+	user.Password = ""
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User role updated successfully",
+		"user":    user,
+	})
 }
