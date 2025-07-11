@@ -347,7 +347,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	// Aggregate partials into a final RCA report using LLM
 	var rawLLMResponse string
 	logger.Info("[RCA] Calling LLM for aggregation", map[string]interface{}{"jobID": jobID})
-	aggregated, rawResp, err := js.aggregatePartialAnalysesWithRaw(job.LogFile, partials, timeout)
+	aggregated, rawResp, err := js.aggregatePartialAnalysesWithRaw(job.LogFile, partials, timeout, selectedModel)
 	if err != nil {
 		logger.Error("RCA aggregation failed", map[string]interface{}{"jobID": jobID, "error": err})
 		js.updateJobStatus(jobID, models.JobStatusFailed, err.Error(), nil)
@@ -362,9 +362,10 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 
 	// Store final RCA in job.Result
 	finalResult := map[string]interface{}{
-		"partials":       partials,
-		"final":          aggregated,
-		"rawLLMResponse": rawLLMResponse,
+		"partials":         partials,
+		"final":            aggregated,
+		"rawLLMResponse":   rawLLMResponse,
+		"aggregationModel": selectedModel,
 	}
 	completedAt := time.Now()
 	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
@@ -775,11 +776,9 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 
 	var wg sync.WaitGroup
 	sem := semaphore.NewWeighted(int64(concurrency))
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Create a context that is cancelled by either the timeout or jobCancelChan
-	ctx, cancel = context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	cancelCtx, cancelFunc := context.WithCancel(ctx)
 	go func() {
 		select {
@@ -995,7 +994,7 @@ func (js *JobService) analyzeChunkWithEnhancedContext(ctx context.Context, logFi
 }
 
 // aggregatePartialAnalysesWithRaw aggregates chunk results into a final RCA report using the LLM
-func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, partials []*LogAnalysisResponse, timeout int) (*LogAnalysisResponse, string, error) {
+func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, partials []*LogAnalysisResponse, timeout int, model string) (*LogAnalysisResponse, string, error) {
 	logger.Info("[RCA] Starting aggregation of partial analyses", map[string]interface{}{
 		"logFileID": logFile.ID,
 		"filename":  logFile.Filename,
@@ -1079,7 +1078,7 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 	})
 
 	// Call LLM for aggregation using user's endpoint with timeout
-	response, err := js.llmService.callLLMWithEndpointAndTimeout(context.Background(), prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout, "")
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(context.Background(), prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout, model)
 	if err != nil {
 		logger.Error("[RCA] LLM aggregation failed", map[string]interface{}{
 			"logFileID": logFile.ID,

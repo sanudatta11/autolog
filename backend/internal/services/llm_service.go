@@ -180,22 +180,22 @@ func (ls *LLMService) addAPICall(call LLMAPICall) {
 	ls.apiCalls = append(ls.apiCalls, call)
 }
 
-// CreateAPICall creates a new API call with context information
-func (ls *LLMService) CreateAPICall(logFileID *uint, jobID *uint, callType string) *LLMAPICall {
+// Update LLMAPICall to accept model as a parameter
+func (ls *LLMService) CreateAPICall(logFileID *uint, jobID *uint, callType string, model string) *LLMAPICall {
 	return &LLMAPICall{
 		ID:        fmt.Sprintf("llm_%d", time.Now().UnixNano()),
 		Timestamp: time.Now(),
 		Endpoint:  "/api/generate",
-		Model:     ls.llmModel,
+		Model:     model,
 		LogFileID: logFileID,
 		JobID:     jobID,
 		CallType:  callType,
 	}
 }
 
-// TrackAPICall tracks an API call with the given context
-func (ls *LLMService) TrackAPICall(logFileID *uint, jobID *uint, callType string, payload map[string]interface{}, status int, duration time.Duration, response string, err string) {
-	call := ls.CreateAPICall(logFileID, jobID, callType)
+// Update TrackAPICall to accept model as a parameter
+func (ls *LLMService) TrackAPICall(logFileID *uint, jobID *uint, callType string, model string, payload map[string]interface{}, status int, duration time.Duration, response string, err string) {
+	call := ls.CreateAPICall(logFileID, jobID, callType, model)
 	call.Payload = payload
 	call.Status = status
 	call.Duration = duration
@@ -543,7 +543,7 @@ func (ls *LLMService) callLLMWithContext(prompt string, logFileID *uint, jobID *
 
 	jsonData, err := json.Marshal(request)
 	if err != nil {
-		ls.TrackAPICall(logFileID, jobID, callType, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
@@ -564,7 +564,7 @@ func (ls *LLMService) callLLMWithContext(prompt string, logFileID *uint, jobID *
 		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
 			"elapsed": elapsed,
 		})
-		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -578,14 +578,14 @@ func (ls *LLMService) callLLMWithContext(prompt string, logFileID *uint, jobID *
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
 		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
 		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
 
@@ -594,7 +594,7 @@ func (ls *LLMService) callLLMWithContext(prompt string, logFileID *uint, jobID *
 		"model":           ollamaResp.Model,
 	})
 
-	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+	ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
 	return ollamaResp.Response, nil
 }
@@ -615,7 +615,7 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 
 	jsonData, err := json.Marshal(request)
 	if err != nil {
-		ls.TrackAPICall(logFileID, jobID, callType, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
@@ -637,7 +637,7 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 	// Create request with context
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, time.Since(startTime), "", fmt.Sprintf("failed to create request: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, 0, time.Since(startTime), "", fmt.Sprintf("failed to create request: %v", err))
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -649,7 +649,7 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
 			"elapsed": elapsed,
 		})
-		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -663,14 +663,14 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
 		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
 		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
 
@@ -679,7 +679,7 @@ func (ls *LLMService) callLLMWithContextAndTimeout(prompt string, logFileID *uin
 		"model":           ollamaResp.Model,
 	})
 
-	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+	ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
 	return ollamaResp.Response, nil
 }
@@ -700,7 +700,7 @@ func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFil
 
 	jsonData, err := json.Marshal(request)
 	if err != nil {
-		ls.TrackAPICall(logFileID, jobID, callType, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
@@ -721,7 +721,7 @@ func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFil
 		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
 			"elapsed": elapsed,
 		})
-		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -735,14 +735,14 @@ func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFil
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
 		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
 		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
 
@@ -751,7 +751,7 @@ func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFil
 		"model":           ollamaResp.Model,
 	})
 
-	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+	ls.TrackAPICall(logFileID, jobID, callType, ls.llmModel, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
 	return ollamaResp.Response, nil
 }
@@ -778,7 +778,7 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(ctx context.Context, prompt 
 
 	jsonData, err := json.Marshal(request)
 	if err != nil {
-		ls.TrackAPICall(logFileID, jobID, callType, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, selectedModel, map[string]interface{}{"prompt": prompt, "error": "marshal_failed"}, 0, time.Since(startTime), "", fmt.Sprintf("failed to marshal request: %v", err))
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
@@ -796,7 +796,7 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(ctx context.Context, prompt 
 	// Create request with context
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, time.Since(startTime), "", fmt.Sprintf("failed to create request: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, selectedModel, payload, 0, time.Since(startTime), "", fmt.Sprintf("failed to create request: %v", err))
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -810,7 +810,7 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(ctx context.Context, prompt 
 		logger.WithError(err, "llm_service").Error("LLM request failed", map[string]interface{}{
 			"elapsed": elapsed,
 		})
-		ls.TrackAPICall(logFileID, jobID, callType, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, selectedModel, payload, 0, elapsed, "", fmt.Sprintf("HTTP request failed: %v", err))
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -824,14 +824,14 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(ctx context.Context, prompt 
 		var respBodyBytes []byte
 		respBodyBytes, _ = io.ReadAll(resp.Body)
 		logger.WithError(fmt.Errorf("status %d: %s", resp.StatusCode, string(respBodyBytes)), "llm_service").Error("Ollama API returned error status")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
+		ls.TrackAPICall(logFileID, jobID, callType, selectedModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes)))
 		return "", fmt.Errorf("Ollama API returned status %d, body: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var ollamaResp OllamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
 		logger.WithError(err, "llm_service").Error("Failed to decode Ollama response")
-		ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
+		ls.TrackAPICall(logFileID, jobID, callType, selectedModel, payload, resp.StatusCode, elapsed, "", fmt.Sprintf("failed to decode Ollama response: %v", err))
 		return "", fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
 
@@ -840,7 +840,7 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(ctx context.Context, prompt 
 		"model":           ollamaResp.Model,
 	})
 
-	ls.TrackAPICall(logFileID, jobID, callType, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
+	ls.TrackAPICall(logFileID, jobID, callType, selectedModel, payload, resp.StatusCode, elapsed, ollamaResp.Response, "")
 
 	return ollamaResp.Response, nil
 }
