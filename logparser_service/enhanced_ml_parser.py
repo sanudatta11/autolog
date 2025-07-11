@@ -286,7 +286,35 @@ class EnhancedMLParser:
                 message = message.replace(match.group(0), '', 1)
                 break
 
-        # 2. Extract Level
+        # 2. Extract Hostname/Identifier (common in system logs)
+        hostname_pattern = r'^(\S+)\s+'
+        hostname_match = re.match(hostname_pattern, message.strip())
+        if hostname_match:
+            hostname = hostname_match.group(1)
+            # Skip if it looks like a timestamp
+            if not re.match(r'\d{4}-\d{2}-\d{2}', hostname):
+                metadata['hostname'] = hostname
+                message = re.sub(hostname_pattern, '', message.strip(), 1)
+
+        # 3. Extract Process with PID (e.g., rclone[1514610], systemd[1])
+        process_pattern = r'^(\w+)\[(\d+)\]:\s*(?:(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)[:\s-]*)?'
+        process_match = re.match(process_pattern, message.strip())
+        if process_match:
+            process_name = process_match.group(1)
+            process_pid = process_match.group(2)
+            level_from_process = process_match.group(3)
+            metadata['process'] = process_name
+            metadata['pid'] = process_pid
+            if level_from_process and not level:
+                level = level_from_process.upper()
+                if level in ["WARN", "WARNING"]: level = "WARN"
+                elif level in ["ERR", "ERROR"]: level = "ERROR"
+                elif level in ["CRIT", "CRITICAL", "FATAL"]: level = "FATAL"
+                elif level in ["DBG", "DEBUG"]: level = "DEBUG"
+                elif level in ["INF", "INFO"]: level = "INFO"
+            message = re.sub(process_pattern, '', message.strip(), 1)
+
+        # 4. Extract Level
         level_patterns = [
             r'\[\s*(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL|CRIT|TRACE)\s*\]',
             r'\b(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL|CRIT|TRACE)\b',
@@ -303,7 +331,7 @@ class EnhancedMLParser:
                 message = message.replace(match.group(0), '', 1)
                 break
 
-        # 3. Extract Bracketed Metadata and Key-Value Pairs
+        # 5. Extract Bracketed Metadata and Key-Value Pairs
         patterns = [
             r'(\b[a-zA-Z_][a-zA-Z0-9_]*=\S+)', # key=value
             r'\[([^\]]+)\]',  # Anything in brackets
@@ -326,12 +354,12 @@ class EnhancedMLParser:
                 else:
                     metadata[f'tag_{len(metadata)+1}'] = match_str.strip()
 
-        # 4. Final Cleanup
+        # 6. Final Cleanup
         message = re.sub(r'\|', '', message)
         message = re.sub(r'^\s*[:\s]*', '', message)
         message = re.sub(r'\s+', ' ', message).strip()
 
-        # 5. Handle edge cases where message becomes empty
+        # 7. Handle edge cases where message becomes empty
         if not message:
             # If we have a timestamp but no message, include the timestamp in message
             if timestamp and not level:

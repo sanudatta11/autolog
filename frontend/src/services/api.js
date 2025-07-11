@@ -1,4 +1,5 @@
 import axios from 'axios'
+// import { hashPassword } from '../utils/crypto'  // Remove hashing
 
 // Get base URL from localStorage or fall back to environment variable or default
 const getBaseURL = () => {
@@ -89,6 +90,12 @@ export const adminUsersAPI = {
 // Manager User Management API
 export const managerUsersAPI = {
   addManagerUser: (user) => api.post('/manager/users', user),
+}
+
+// Password Change API
+export const passwordAPI = {
+  changePassword: (currentPassword, newPassword) =>
+    api.post('/auth/change-password', { currentPassword, newPassword }),
 }
 
 export default api 

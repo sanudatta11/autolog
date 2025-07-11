@@ -193,3 +193,4 @@ func (sc *SettingsController) UpdateLLMEndpoint(c *gin.Context) {
 		"llm_endpoint": user.LLMEndpoint,
 	})
 }
+ 

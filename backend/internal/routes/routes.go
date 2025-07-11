@@ -49,6 +49,12 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				users.GET("", userController.GetUsers)
 			}
 
+			// Password change
+			auth := protected.Group("/auth")
+			{
+				auth.POST("/change-password", authController.ChangePassword)
+			}
+
 			// Settings
 			settings := protected.Group("/settings")
 			{

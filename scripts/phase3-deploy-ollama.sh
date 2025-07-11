@@ -123,7 +123,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-print_success "Ollama deployed successfully!"
+    print_success "Ollama deployed successfully!"
 
 # Clean up temporary file
 rm -f ollama.tf

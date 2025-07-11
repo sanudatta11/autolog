@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import api from '../services/api'
+// import { hashPassword } from '../utils/crypto'  // Remove hashing
 
 const AuthContext = createContext()
 
@@ -51,6 +52,7 @@ export function AuthProvider({ children }) {
       // Update API base URL with the provided backend URL
       api.defaults.baseURL = backendUrl
       
+      // Send raw password
       const response = await api.post('/auth/login', { email, password })
       const { token, user } = response.data
       if (token) {

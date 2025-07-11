@@ -258,6 +258,33 @@ def extract_structured_fields_from_ml(content, timestamp=None, level=None):
                 entry["level"] = level
                 break
     
+    # Special handling for systemd/rclone format: timestamp hostname process[pid]: level: message
+    systemd_pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))\s+(\S+)\s+(\w+)\[(\d+)\]:\s*(?:(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)[:\s-]*)?(.*)$'
+    systemd_match = re.match(systemd_pattern, content)
+    if systemd_match:
+        entry["timestamp"] = normalize_timestamp(systemd_match.group(1))
+        entry["metadata"]["hostname"] = systemd_match.group(2)
+        entry["metadata"]["process"] = systemd_match.group(3)
+        entry["metadata"]["pid"] = systemd_match.group(4)
+        level = systemd_match.group(5)
+        if level:
+            level = level.upper()
+            if level in ["WARN", "WARNING"]:
+                level = "WARN"
+            elif level in ["ERR", "ERROR"]:
+                level = "ERROR"
+            elif level in ["CRIT", "CRITICAL", "FATAL"]:
+                level = "FATAL"
+            elif level in ["DBG", "DEBUG"]:
+                level = "DEBUG"
+            elif level in ["INF", "INFO"]:
+                level = "INFO"
+        else:
+            level = "INFO"  # Default level for systemd messages
+        entry["level"] = level
+        entry["message"] = systemd_match.group(6).strip()
+        return entry
+    
     # Try to extract timestamp from content if not provided
     if not entry["timestamp"]:
         timestamp_patterns = [
@@ -287,6 +314,10 @@ def detect_log_format(lines):
     
     # Common log format patterns
     format_patterns = [
+        # RFC3339 with hostname, process, and level (systemd/rclone format)
+        (r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\s+\S+\s+\w+\[\d+\]:\s*(?:INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)', 
+         'systemd_rclone'),
+        
         # RFC3339 with level
         (r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\s+(?:DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)', 
          '<Date> <Time> <Level> <Content>'),
@@ -385,6 +416,60 @@ def parse_apache_nginx_logs(lines):
     
     return entries
 
+def parse_systemd_rclone_logs(lines):
+    """Special parser for systemd/rclone logs with format: timestamp hostname process[pid]: level: message"""
+    entries = []
+    
+    for line in lines:
+        # systemd/rclone log pattern
+        pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))\s+(\S+)\s+(\w+)\[(\d+)\]:\s*(?:(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|CRITICAL)[:\s-]*)?(.*)$'
+        match = re.match(pattern, line)
+        
+        if match:
+            timestamp, hostname, process, pid, level, message = match.groups()
+            
+            # Normalize level (handle None case)
+            if level:
+                level = level.upper()
+                if level in ["WARN", "WARNING"]:
+                    level = "WARN"
+                elif level in ["ERR", "ERROR"]:
+                    level = "ERROR"
+                elif level in ["CRIT", "CRITICAL", "FATAL"]:
+                    level = "FATAL"
+                elif level in ["DBG", "DEBUG"]:
+                    level = "DEBUG"
+                elif level in ["INF", "INFO"]:
+                    level = "INFO"
+            else:
+                level = "INFO"  # Default level for systemd messages
+            
+            entry = {
+                "timestamp": normalize_timestamp(timestamp),
+                "level": level,
+                "message": message.strip(),
+                "metadata": {
+                    "hostname": hostname,
+                    "process": process,
+                    "pid": pid,
+                    "log_format": "systemd_rclone"
+                },
+                "rawData": line
+            }
+            entries.append(entry)
+        else:
+            # Fallback for non-matching lines
+            entry = {
+                "timestamp": None,
+                "level": "INFO",
+                "message": line,
+                "metadata": {"log_format": "systemd_rclone_fallback"},
+                "rawData": line
+            }
+            entries.append(entry)
+    
+    return entries
+
 @app.post("/parse")
 async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
     try:
@@ -424,6 +509,12 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
                 print(f"[DEBUG] Apache/Nginx parser returned {len(entries)} entries")
                 return JSONResponse(content=entries)
             
+            if log_format == 'systemd_rclone':
+                print(f"[DEBUG] Using systemd/rclone parser for {len(lines)} lines")
+                entries = parse_systemd_rclone_logs(lines)
+                print(f"[DEBUG] systemd/rclone parser returned {len(entries)} entries")
+                return JSONResponse(content=entries)
+            
             # If no JSON entries, use enhanced ML parsing for unstructured logs
             print(f"[DEBUG] Using enhanced ML parser for {len(unstructured_lines)} unstructured lines")
             
@@ -456,6 +547,55 @@ async def parse_log(file: UploadFile = File(...), log_format: str = Form(None)):
     except Exception as e:
         print(f"[DEBUG] Exception in /parse: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/parse-dynamic")
+async def parse_logs_dynamic(request: LogParseRequest):
+    """Parse log lines using dynamic LLM-generated patterns"""
+    try:
+        lines = request.lines
+        if not lines:
+            return JSONResponse(content=[], status_code=400)
+        
+        print(f"[DEBUG] Dynamic parsing: Received {len(lines)} lines")
+        
+        # Use dynamic pattern generation with LLM
+        entries = await parse_logs_with_dynamic_patterns(lines)
+        print(f"[DEBUG] Dynamic parsing returned {len(entries)} entries")
+        
+        return JSONResponse(content=entries)
+        
+    except Exception as e:
+        print(f"[ERROR] Dynamic parse error: {str(e)}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+async def parse_logs_with_dynamic_patterns(lines):
+    """Parse logs using LLM-generated dynamic patterns"""
+    try:
+        # For now, we'll use the enhanced ML parser as a proxy for dynamic parsing
+        # In a full implementation, this would call an LLM service to generate patterns
+        print(f"[DEBUG] Using enhanced ML parser for dynamic parsing of {len(lines)} lines")
+        
+        # Use the enhanced ML parser
+        entries = ml_parser.parse_logs_intelligently(lines)
+        
+        # If ML parser fails, try systemd/rclone patterns as fallback
+        if len(entries) < len(lines) * 0.3:  # Less than 30% success
+            print(f"[DEBUG] ML parser success rate low ({len(entries)}/{len(lines)}), trying systemd patterns")
+            systemd_entries = parse_systemd_rclone_logs(lines)
+            if len(systemd_entries) > len(entries):
+                print(f"[DEBUG] Systemd patterns better ({len(systemd_entries)} entries), using them")
+                return systemd_entries
+        
+        return entries
+        
+    except Exception as e:
+        print(f"[ERROR] Dynamic pattern parsing failed: {str(e)}")
+        # Fallback to basic regex parsing
+        fallback_entries = []
+        for line in lines:
+            entry = extract_structured_fields_from_ml(content=line)
+            fallback_entries.append(entry)
+        return fallback_entries
 
 @app.get("/health")
 async def health_check():

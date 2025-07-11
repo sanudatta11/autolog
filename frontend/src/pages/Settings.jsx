@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import api, { adminUsersAPI, managerUsersAPI } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import PasswordChange from '../components/PasswordChange'
 
 function Settings() {
   const [selectedSection, setSelectedSection] = useState(null)
@@ -21,6 +22,13 @@ function Settings() {
       description: 'Manage user accounts and permissions',
       color: 'green'
     },
+    { 
+      id: 'password', 
+      name: 'Change Password', 
+      icon: '🔒', 
+      description: 'Update your account password',
+      color: 'purple'
+    },
   ]
 
   // If no section is selected, show the selection screen
@@ -40,7 +48,11 @@ function Settings() {
               className="card cursor-pointer hover:shadow-md transition-shadow duration-200 p-6"
             >
               <div className="flex items-center space-x-4">
-                <div className={`text-3xl ${option.color === 'blue' ? 'text-blue-500' : 'text-green-500'}`}>
+                <div className={`text-3xl ${
+                  option.color === 'blue' ? 'text-blue-500' : 
+                  option.color === 'green' ? 'text-green-500' : 
+                  option.color === 'purple' ? 'text-purple-500' : 'text-gray-500'
+                }`}>
                   {option.icon}
                 </div>
                 <div className="flex-1">
@@ -83,6 +95,7 @@ function Settings() {
 
       {selectedSection === 'llm' && <LLMSettings />}
       {selectedSection === 'users' && <UserManagement />}
+      {selectedSection === 'password' && <PasswordChange />}
     </div>
   )
 }
