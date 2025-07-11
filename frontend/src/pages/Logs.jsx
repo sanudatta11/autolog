@@ -924,51 +924,26 @@ const Logs = () => {
           <div className="text-center py-8 text-gray-500">No log files uploaded yet</div>
         ) : (
           <div className="space-y-4">
-            {logFiles.map((logFile) => (
-              <div key={logFile.id} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <h3 className="font-semibold">{logFile.filename}</h3>
-                    <div className="text-sm text-gray-600 mt-1">
-                      <span>Size: {(logFile.size / 1024).toFixed(2)} KB</span>
-                      <span className="mx-2">•</span>
-                      <span>Entries: {logFile.entryCount}</span>
-                      <span className="mx-2">•</span>
-                      <span>Errors: {logFile.errorCount}</span>
-                      <span className="mx-2">•</span>
-                      <span>Warnings: {logFile.warningCount}</span>
-                      <span className="mx-2">•</span>
-                      {/* Improved Status badge with new mapping */}
-                      {/* REMOVE THIS GENERIC STATUS BADGE TO AVOID DUPLICATE SUCCESS */}
-                      {/*
-                      <span
-                        className={
-                          !logFile.status || logFile.status === 'not_started'
-                            ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
-                            : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
-                            ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
-                            : logFile.status === 'failed'
-                            ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
-                            : logFile.status === 'completed'
-                            ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
-                            : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
-                        }
-                      >
-                        {logFile.status === 'not_started' || !logFile.status
-                          ? 'Not Started'
-                          : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
-                          ? 'In Progress'
-                          : logFile.status === 'failed'
-                          ? 'Failed'
-                          : logFile.status === 'completed'
-                          ? 'Success'
-                          : logFile.status}
-                      </span>
-                      <span className="mx-2">•</span>
-                      */}
-                      {/* Pre-Processing Status badge with label */}
-                      <span className="mr-2">
-                        <span className="font-medium text-xs text-gray-500 mr-1">Pre-Processing Status:</span>
+            {logFiles.map((logFile) => {
+              // Find the active RCA job for this log file
+              const activeJob = logFile.jobs?.find(j => j.status === 'running' || j.status === 'pending');
+              return (
+                <div key={logFile.id} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-semibold">{logFile.filename}</h3>
+                      <div className="text-sm text-gray-600 mt-1">
+                        <span>Size: {(logFile.size / 1024).toFixed(2)} KB</span>
+                        <span className="mx-2">•</span>
+                        <span>Entries: {logFile.entryCount}</span>
+                        <span className="mx-2">•</span>
+                        <span>Errors: {logFile.errorCount}</span>
+                        <span className="mx-2">•</span>
+                        <span>Warnings: {logFile.warningCount}</span>
+                        <span className="mx-2">•</span>
+                        {/* Improved Status badge with new mapping */}
+                        {/* REMOVE THIS GENERIC STATUS BADGE TO AVOID DUPLICATE SUCCESS */}
+                        {/*
                         <span
                           className={
                             !logFile.status || logFile.status === 'not_started'
@@ -992,131 +967,169 @@ const Logs = () => {
                             ? 'Success'
                             : logFile.status}
                         </span>
-                      </span>
-                      <span className="mx-2">•</span>
-                      {/* RCA Status badge with label */}
-                      <span className="ml-2">
-                        <span className="font-medium text-xs text-gray-500 mr-1">RCA Status:</span>
-                        <span
-                          className={
-                            !logFile.rcaAnalysisStatus || logFile.rcaAnalysisStatus === 'not_started'
-                              ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
-                              : logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running'
-                              ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
-                              : logFile.rcaAnalysisStatus === 'failed'
-                              ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
-                              : logFile.rcaAnalysisStatus === 'completed'
-                              ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
-                              : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
-                          }
-                        >
-                          {!logFile.rcaAnalysisStatus || logFile.rcaAnalysisStatus === 'not_started'
-                            ? 'Not Started'
-                            : logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running'
-                            ? 'In Progress'
-                            : logFile.rcaAnalysisStatus === 'failed'
-                            ? 'Failed'
-                            : logFile.rcaAnalysisStatus === 'completed'
-                            ? 'Success'
-                            : logFile.rcaAnalysisStatus}
+                        <span className="mx-2">•</span>
+                        */}
+                        {/* Pre-Processing Status badge with label */}
+                        <span className="mr-2">
+                          <span className="font-medium text-xs text-gray-500 mr-1">Pre-Processing Status:</span>
+                          <span
+                            className={
+                              !logFile.status || logFile.status === 'not_started'
+                                ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                                : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
+                                ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
+                                : logFile.status === 'failed'
+                                ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
+                                : logFile.status === 'completed'
+                                ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
+                                : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                            }
+                          >
+                            {logFile.status === 'not_started' || !logFile.status
+                              ? 'Not Started'
+                              : logFile.status === 'processing' || logFile.status === 'pending' || logFile.status === 'running'
+                              ? 'In Progress'
+                              : logFile.status === 'failed'
+                              ? 'Failed'
+                              : logFile.status === 'completed'
+                              ? 'Success'
+                              : logFile.status}
+                          </span>
                         </span>
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      Uploaded: {new Date(logFile.createdAt).toLocaleString()}
-                    </div>
-                    {/* RCA not possible message */}
-                    {logFile.isRCAPossible === false && (
-                      <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 flex items-center">
-                        <svg className="h-5 w-5 mr-2 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z" /></svg>
-                        <span><strong>No RCA Needed:</strong> {logFile.rcaNotPossibleReason || 'This file does not require RCA analysis.'}</span>
+                        <span className="mx-2">•</span>
+                        {/* RCA Status badge with label */}
+                        <span className="ml-2">
+                          <span className="font-medium text-xs text-gray-500 mr-1">RCA Status:</span>
+                          <span
+                            className={
+                              !logFile.rcaAnalysisStatus || logFile.rcaAnalysisStatus === 'not_started'
+                                ? 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                                : logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running'
+                                ? 'bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-semibold'
+                                : logFile.rcaAnalysisStatus === 'failed'
+                                ? 'bg-red-200 text-red-800 px-2 py-1 rounded text-xs font-semibold'
+                                : logFile.rcaAnalysisStatus === 'completed'
+                                ? 'bg-green-200 text-green-800 px-2 py-1 rounded text-xs font-semibold'
+                                : 'bg-gray-200 text-gray-800 px-2 py-1 rounded text-xs font-semibold'
+                            }
+                          >
+                            {!logFile.rcaAnalysisStatus || logFile.rcaAnalysisStatus === 'not_started'
+                              ? 'Not Started'
+                              : logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running'
+                              ? 'In Progress'
+                              : logFile.rcaAnalysisStatus === 'failed'
+                              ? 'Failed'
+                              : logFile.rcaAnalysisStatus === 'completed'
+                              ? 'Success'
+                              : logFile.rcaAnalysisStatus}
+                          </span>
+                        </span>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => {
-                        if (selectedLogFile && selectedLogFile.id === logFile.id) {
-                          setSelectedLogFile(null);
-                          setLogEntries([]);
-                        } else {
-                          handleViewLogFile(logFile);
-                        }
-                      }}
-                      className={`bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700`}
-                    >
-                      {selectedLogFile && selectedLogFile.id === logFile.id ? 'Close Details' : 'View Details'}
-                    </button>
-                    {/* RCA buttons only if RCA is possible */}
-                    {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Uploaded: {new Date(logFile.createdAt).toLocaleString()}
+                      </div>
+                      {/* RCA not possible message */}
+                      {logFile.isRCAPossible === false && (
+                        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 flex items-center">
+                          <svg className="h-5 w-5 mr-2 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z" /></svg>
+                          <span><strong>No RCA Needed:</strong> {logFile.rcaNotPossibleReason || 'This file does not require RCA analysis.'}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex space-x-2">
                       <button
-                        onClick={() => openRcaModal(logFile.id)}
-                        className={`bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
-                        disabled={analyzeLoading[logFile.id]}
+                        onClick={() => {
+                          if (selectedLogFile && selectedLogFile.id === logFile.id) {
+                            setSelectedLogFile(null);
+                            setLogEntries([]);
+                          } else {
+                            handleViewLogFile(logFile);
+                          }
+                        }}
+                        className={`bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700`}
                       >
-                        {analyzeLoading[logFile.id] ? (
-                          <span className="flex items-center"><span className="animate-spin mr-2">⏳</span>Generating...</span>
-                        ) : (
-                          'Generate RCA'
-                        )}
+                        {selectedLogFile && selectedLogFile.id === logFile.id ? 'Close Details' : 'View Details'}
                       </button>
-                    )}
-                    {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
-                      <button
-                        onClick={() => openRcaModal(logFile.id)}
-                        className={`bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
-                        disabled={analyzeLoading[logFile.id]}
-                      >
-                        {analyzeLoading[logFile.id] ? (
-                          <span className="flex items-center"><span className="animate-spin mr-2">⏳</span>Generating...</span>
-                        ) : (
-                          'Re-Generate RCA'
-                        )}
-                      </button>
-                    )}
-                    {logFile.isRCAPossible !== false && (logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (
-                      <button
-                        disabled
-                        className="bg-gray-400 text-white px-3 py-1 rounded text-sm cursor-not-allowed"
-                      >
-                        RCA Running...
-                      </button>
-                    )}
-                    {logFile.isRCAPossible !== false && logFile.rcaAnalysisStatus === 'completed' && (
-                      <>
+                      {/* RCA buttons only if RCA is possible */}
+                      {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'not_started' || !logFile.rcaAnalysisStatus) && (
                         <button
-                          onClick={() => handleShowLLMAnalysis(logFile)}
-                          className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+                          onClick={() => openRcaModal(logFile.id)}
+                          className={`bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          disabled={analyzeLoading[logFile.id]}
                         >
-                          View RCA
+                          {analyzeLoading[logFile.id] ? (
+                            <span className="flex items-center"><span className="animate-spin mr-2">⏳</span>Generating...</span>
+                          ) : (
+                            'Generate RCA'
+                          )}
                         </button>
+                      )}
+                      {logFile.isRCAPossible !== false && logFile.status === 'completed' && (logFile.rcaAnalysisStatus === 'completed' || logFile.rcaAnalysisStatus === 'failed') && (
                         <button
-                          onClick={() => handleDownloadRcaPdfForLog(logFile)}
-                          className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out"
-                          title="Download RCA as PDF"
+                          onClick={() => openRcaModal(logFile.id)}
+                          className={`bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 ${analyzeLoading[logFile.id] ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          disabled={analyzeLoading[logFile.id]}
                         >
-                          Download RCA PDF
+                          {analyzeLoading[logFile.id] ? (
+                            <span className="flex items-center"><span className="animate-spin mr-2">⏳</span>Generating...</span>
+                          ) : (
+                            'Re-Generate RCA'
+                          )}
                         </button>
+                      )}
+                      {logFile.isRCAPossible !== false && (logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') && (
                         <button
-                          onClick={() => !logFile.hasReview && handleGiveReview(logFile)}
-                          className={`px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out ${logFile.hasReview ? 'bg-green-200 text-green-900 cursor-default' : 'bg-orange-500 hover:bg-orange-600 text-white'}`}
-                          disabled={logFile.hasReview}
-                          title={logFile.hasReview ? 'Review already submitted' : 'Give Review'}
+                          disabled
+                          className="bg-gray-400 text-white px-3 py-1 rounded text-sm cursor-not-allowed"
                         >
-                          {logFile.hasReview ? 'Review Submitted' : 'Give Review'}
+                          RCA Running...
                         </button>
-                      </>
-                    )}
-                    <button
-                      onClick={() => handleDelete(logFile.id)}
-                      className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
-                    >
-                      Delete
-                    </button>
+                      )}
+                      {logFile.isRCAPossible !== false && logFile.rcaAnalysisStatus === 'completed' && (
+                        <>
+                          <button
+                            onClick={() => handleShowLLMAnalysis(logFile)}
+                            className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+                          >
+                            View RCA
+                          </button>
+                          <button
+                            onClick={() => handleDownloadRcaPdfForLog(logFile)}
+                            className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out"
+                            title="Download RCA as PDF"
+                          >
+                            Download RCA PDF
+                          </button>
+                          <button
+                            onClick={() => !logFile.hasReview && handleGiveReview(logFile)}
+                            className={`px-3 py-1 rounded text-sm font-semibold shadow transition duration-150 ease-in-out ${logFile.hasReview ? 'bg-green-200 text-green-900 cursor-default' : 'bg-orange-500 hover:bg-orange-600 text-white'}`}
+                            disabled={logFile.hasReview}
+                            title={logFile.hasReview ? 'Review already submitted' : 'Give Review'}
+                          >
+                            {logFile.hasReview ? 'Review Submitted' : 'Give Review'}
+                          </button>
+                        </>
+                      )}
+                      {(logFile.rcaAnalysisStatus === 'In Progress' || activeJob) ? (
+                        <button
+                          onClick={() => cancelRcaJob(activeJob?.id || logFile.rcaAnalysisJobId)}
+                          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+                        >
+                          Cancel RCA
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleDelete(logFile.id)}
+                          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
