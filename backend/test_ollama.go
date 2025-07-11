@@ -13,7 +13,7 @@ func main() {
 	fmt.Println("Testing Ollama connection...")
 
 	// Create LLM service
-	llmService := services.NewLLMService("http://localhost:11434", "codellama:7b")
+	llmService := services.NewLLMService("http://localhost:11434", "llama2:7b")
 
 	// Test health check
 	fmt.Println("1. Testing health check...")

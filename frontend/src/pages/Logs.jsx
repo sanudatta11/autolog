@@ -48,12 +48,18 @@ const Logs = () => {
   const [analyzeLoading, setAnalyzeLoading] = useState({}); // { [logFileId]: boolean }
   const [rcaModalOpen, setRcaModalOpen] = useState(false);
   const [rcaTargetLogFileId, setRcaTargetLogFileId] = useState(null);
-  const [rcaTimeout, setRcaTimeout] = useState(300);
+  const [rcaTimeout, setRcaTimeout] = useState('120');
   const [rcaChunking, setRcaChunking] = useState(true);
+  const [useSmartChunking, setUseSmartChunking] = useState(true);
   const [rcaError, setRcaError] = useState('');
-  const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [availableModels, setAvailableModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
+
+  // Job tracking state
+  const [activeJobs, setActiveJobs] = useState({}); // logFileId -> jobId
+  const [jobStatuses, setJobStatuses] = useState({}); // jobId -> status
+  const [jobProgress, setJobProgress] = useState({}); // jobId -> progress
 
   const [uploadLimit, setUploadLimit] = useState(5 * 1024 * 1024); // Default 5MB
 
@@ -94,6 +100,20 @@ const Logs = () => {
     fetchLogFiles();
     fetchUserRole();
   }, []);
+
+  // Poll job status for active jobs
+  useEffect(() => {
+    const activeJobIds = Object.values(activeJobs);
+    if (activeJobIds.length === 0) return;
+
+    const interval = setInterval(async () => {
+      for (const jobId of activeJobIds) {
+        await fetchJobStatus(jobId);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [activeJobs]);
 
   const fetchUserRole = async () => {
     try {
@@ -243,8 +263,9 @@ const Logs = () => {
   // Show RCA modal instead of direct analyze
   const openRcaModal = async (logFileId) => {
     setRcaTargetLogFileId(logFileId);
-    setRcaTimeout(300);
+    setRcaTimeout(120); // Reduced from 300 to 120 seconds
     setRcaChunking(true);
+    setUseSmartChunking(true);
     setRcaError('');
     setSelectedModel('');
     setRcaModalOpen(true);
@@ -268,28 +289,121 @@ const Logs = () => {
 
   // New handler for RCA with options
   const handleRcaProceed = async () => {
-    if (!rcaTimeout || isNaN(rcaTimeout) || rcaTimeout <= 0) {
-      setRcaError('Timeout is required and must be a positive number.');
+    if (!selectedModel) {
+      setRcaError('Please select a model');
       return;
     }
-    setRcaModalOpen(false);
-    setAnalyzeLoading((prev) => ({ ...prev, [rcaTargetLogFileId]: true }));
+
     try {
-      const response = await api.post(`/logs/${rcaTargetLogFileId}/analyze`, {
-        timeout: Number(rcaTimeout),
-        chunking: rcaChunking,
-        model: selectedModel, // Include selected model
+      setRcaError('');
+      const response = await fetch(`/api/v1/logs/${rcaTargetLogFileId}/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          timeout: parseInt(rcaTimeout),
+          chunking: rcaChunking,
+          smartChunking: useSmartChunking,
+          model: selectedModel,
+        }),
       });
-      const msg = response.data && response.data.message
-        ? response.data.message
-        : 'RCA analysis started.';
-      setMessage({ text: 'RCA analysis started: ' + msg, type: 'success' });
-      fetchLogFiles();
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to start RCA analysis');
+      }
+
+      const data = await response.json();
+      setRcaModalOpen(false);
+      setRcaTargetLogFileId(null);
+      setSelectedModel('');
+      setRcaTimeout('120');
+      setRcaChunking(true);
+      setUseSmartChunking(true);
+      setRcaError('');
+
+      // Track the job if we have a job ID
+      if (data.jobId) {
+        setActiveJobs(prev => ({ ...prev, [rcaTargetLogFileId]: data.jobId }));
+        setJobStatuses(prev => ({ ...prev, [data.jobId]: 'pending' }));
+        setJobProgress(prev => ({ ...prev, [data.jobId]: 0 }));
+      }
+
+      // Show success message
+      alert('RCA analysis started successfully! You can monitor the progress in the job status section.');
+
+      // Refresh log files to show updated status
+      await fetchLogFiles();
     } catch (error) {
-      setMessage({ text: 'Analysis failed: ' + (error.response?.data?.error || error.message), type: 'error' });
-    } finally {
-      setAnalyzeLoading((prev) => ({ ...prev, [rcaTargetLogFileId]: false }));
+      console.error('RCA analysis error:', error);
+      setRcaError(error.message);
     }
+  };
+
+  const cancelRcaJob = async (jobId) => {
+    if (!confirm('Are you sure you want to cancel this RCA analysis? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/v1/jobs/${jobId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to cancel RCA analysis');
+      }
+
+      // Show success message
+      alert('RCA analysis cancelled successfully!');
+
+      // Refresh log files to show updated status
+      await fetchLogFiles();
+    } catch (error) {
+      console.error('Cancel RCA analysis error:', error);
+      alert(`Failed to cancel RCA analysis: ${error.message}`);
+    }
+  };
+
+  const fetchJobStatus = async (jobId) => {
+    try {
+      const response = await fetch(`/api/v1/jobs/${jobId}/status`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const job = await response.json();
+        setJobStatuses(prev => ({ ...prev, [jobId]: job.status }));
+        setJobProgress(prev => ({ ...prev, [jobId]: job.progress || 0 }));
+        
+        // If job is completed or failed, remove from active jobs
+        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+          setActiveJobs(prev => {
+            const newActiveJobs = { ...prev };
+            Object.keys(newActiveJobs).forEach(logFileId => {
+              if (newActiveJobs[logFileId] === jobId) {
+                delete newActiveJobs[logFileId];
+              }
+            });
+            return newActiveJobs;
+          });
+        }
+        
+        return job;
+      }
+    } catch (error) {
+      console.error('Failed to fetch job status:', error);
+    }
+    return null;
   };
 
   const handleDelete = (logFileId) => {
@@ -1007,6 +1121,65 @@ const Logs = () => {
         )}
       </div>
 
+      {/* Active Jobs Status */}
+      {Object.keys(activeJobs).length > 0 && (
+        <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+          <h2 className="text-xl font-semibold mb-4">🔄 Active RCA Jobs</h2>
+          <div className="space-y-4">
+            {Object.entries(activeJobs).map(([logFileId, jobId]) => {
+              const logFile = logFiles.find(lf => lf.id.toString() === logFileId);
+              const status = jobStatuses[jobId] || 'pending';
+              const progress = jobProgress[jobId] || 0;
+              
+              return (
+                <div key={jobId} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-semibold">
+                        {logFile ? logFile.filename : `Job ${jobId}`}
+                      </h3>
+                      <div className="text-sm text-gray-600 mt-1">
+                        <span>Job ID: {jobId}</span>
+                        <span className="mx-2">•</span>
+                        <span>Status: {status}</span>
+                        <span className="mx-2">•</span>
+                        <span>Progress: {progress}%</span>
+                      </div>
+                      {progress > 0 && (
+                        <div className="mt-2">
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                              style={{ width: `${progress}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex space-x-2">
+                      {status === 'running' || status === 'pending' ? (
+                        <button
+                          onClick={() => cancelRcaJob(jobId)}
+                          className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
+                        >
+                          Cancel
+                        </button>
+                      ) : (
+                        <span className="text-sm text-gray-500">
+                          {status === 'completed' ? 'Completed' : 
+                           status === 'failed' ? 'Failed' : 
+                           status === 'cancelled' ? 'Cancelled' : status}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Log File Details */}
       {selectedLogFile && (
         <div className="bg-white rounded-lg shadow-md p-6 mt-8">
@@ -1459,6 +1632,18 @@ const Logs = () => {
                     <span className="ml-1">No</span>
                   </label>
                 </div>
+              </div>
+              <div>
+                <label className="inline-flex items-center mt-2">
+                  <input
+                    type="checkbox"
+                    className="form-checkbox"
+                    checked={useSmartChunking}
+                    onChange={e => setUseSmartChunking(e.target.checked)}
+                    disabled={!rcaChunking}
+                  />
+                  <span className="ml-2">Smart Chunking (only analyze chunks with errors)</span>
+                </label>
               </div>
               {rcaError && <div className="text-red-600">{rcaError}</div>}
               <div className="flex justify-end">

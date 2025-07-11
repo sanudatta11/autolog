@@ -83,6 +83,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 			jobs := protected.Group("/jobs")
 			{
 				jobs.GET("/:jobId/status", logController.GetRCAJobStatus)
+				jobs.POST("/:id/cancel", logController.CancelRCAAnalysis)
 			}
 
 			// Admin routes

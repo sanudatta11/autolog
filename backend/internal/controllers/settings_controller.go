@@ -94,7 +94,7 @@ func (sc *SettingsController) TestLLMEndpoint(c *gin.Context) {
 	}
 
 	// Create a temporary LLM service with the provided endpoint
-	llmService := services.NewLLMServiceWithEndpoint(req.LLMEndpoint, "codellama:7b")
+	llmService := services.NewLLMServiceWithEndpoint(req.LLMEndpoint, "llama2:7b")
 
 	// Test the endpoint
 	if err := llmService.CheckLLMStatusWithEndpoint(req.LLMEndpoint); err != nil {
@@ -209,7 +209,7 @@ func (sc *SettingsController) GetLLMModels(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "LLM endpoint not configured"})
 		return
 	}
-	llmService := services.NewLLMServiceWithEndpoint(*user.LLMEndpoint, "codellama:7b")
+	llmService := services.NewLLMServiceWithEndpoint(*user.LLMEndpoint, "llama2:7b")
 	models, err := llmService.GetAvailableModelsWithEndpoint(*user.LLMEndpoint)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -238,7 +238,7 @@ func (sc *SettingsController) PullLLMModel(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "LLM endpoint not configured"})
 		return
 	}
-	llmService := services.NewLLMServiceWithEndpoint(*user.LLMEndpoint, "codellama:7b")
+	llmService := services.NewLLMServiceWithEndpoint(*user.LLMEndpoint, "llama2:7b")
 	err := llmService.PullModelWithEndpoint(req.Model, *user.LLMEndpoint)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})

@@ -24,6 +24,9 @@ type JobService struct {
 	learningService *LearningService
 	feedbackService *FeedbackService
 	stopChan        chan struct{}
+	// Add cancellation tracking
+	activeJobs map[uint]chan struct{} // jobID -> cancellation channel
+	jobMutex   sync.RWMutex
 }
 
 // NewJobService creates a new job service
@@ -34,6 +37,7 @@ func NewJobService(db *gorm.DB, llmService *LLMService, learningService *Learnin
 		learningService: learningService,
 		feedbackService: feedbackService,
 		stopChan:        make(chan struct{}),
+		activeJobs:      make(map[uint]chan struct{}),
 	}
 }
 
@@ -50,7 +54,7 @@ func (js *JobService) filterErrorEntries(entries []models.LogEntry) []models.Log
 
 // CreateRCAAnalysisJob creates a new RCA analysis job
 func (js *JobService) CreateRCAAnalysisJob(logFileID uint) (*models.Job, error) {
-	return js.CreateRCAAnalysisJobWithOptions(logFileID, 300, true, true, "") // Default timeout 300s, chunking enabled, smart chunking enabled, default model
+	return js.CreateRCAAnalysisJobWithOptions(logFileID, 120, true, true, "") // Default timeout 120s, chunking enabled, smart chunking enabled, default model
 }
 
 // CreateRCAAnalysisJobWithOptions creates a new RCA analysis job with custom options
@@ -97,9 +101,10 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	completed := false
 	var logFileID *uint // Track logFileID for deferred error handling
 
-	logger.Info("[RCA] Starting RCA analysis job", map[string]interface{}{"jobID": jobID})
-
+	// Register this job for cancellation
+	jobCancelChan := js.registerJob(jobID)
 	defer func() {
+		js.unregisterJob(jobID)
 		if !completed {
 			logger.Error("[RCA] Job failed due to shutdown or unexpected exit", map[string]interface{}{"jobID": jobID})
 			js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
@@ -113,6 +118,8 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 			}
 		}
 	}()
+
+	logger.Info("[RCA] Starting RCA analysis job", map[string]interface{}{"jobID": jobID})
 
 	// Update job status to running
 	now := time.Now()
@@ -150,6 +157,9 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	select {
 	case <-stopChan:
 		logger.Info("[RCA] Job cancelled before starting analysis", map[string]interface{}{"jobID": jobID})
+		return
+	case <-jobCancelChan:
+		logger.Info("[RCA] Job cancelled by user before starting analysis", map[string]interface{}{"jobID": jobID})
 		return
 	default:
 	}
@@ -203,6 +213,9 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	select {
 	case <-stopChan:
 		logger.Info("[RCA] Job cancelled before starting analysis", map[string]interface{}{"jobID": jobID})
+		return
+	case <-jobCancelChan:
+		logger.Info("[RCA] Job cancelled by user before starting analysis", map[string]interface{}{"jobID": jobID})
 		return
 	default:
 	}
@@ -258,7 +271,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	})
 
 	logger.Info("[RCA] Starting chunk analysis", map[string]interface{}{"jobID": jobID})
-	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, timeout, smartChunking, selectedModel)
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, jobCancelChan, timeout, smartChunking, selectedModel)
 	if err != nil {
 		logger.Error("RCA analysis failed", map[string]interface{}{"jobID": jobID, "error": err})
 		failMsg := err.Error()
@@ -309,6 +322,9 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		case <-stopChan:
 			logger.Info("[RCA] Job cancelled during chunk processing", map[string]interface{}{"jobID": jobID})
 			return
+		case <-jobCancelChan:
+			logger.Info("[RCA] Job cancelled by user during chunk processing", map[string]interface{}{"jobID": jobID})
+			return
 		default:
 		}
 	}
@@ -321,6 +337,9 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	select {
 	case <-stopChan:
 		logger.Info("[RCA] Job cancelled before aggregation", map[string]interface{}{"jobID": jobID})
+		return
+	case <-jobCancelChan:
+		logger.Info("[RCA] Job cancelled by user before aggregation", map[string]interface{}{"jobID": jobID})
 		return
 	default:
 	}
@@ -515,7 +534,7 @@ func getAvailableMemoryMB() int {
 	return int(sysinfo.Freeram / 1024 / 1024)
 }
 
-func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, timeout int, smartChunking bool, model string) ([]*LogAnalysisResponse, error) {
+func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, jobCancelChan <-chan struct{}, timeout int, smartChunking bool, model string) ([]*LogAnalysisResponse, error) {
 	logger.Info("[RCA] Starting chunk analysis preparation", map[string]interface{}{
 		"jobID":         jobID,
 		"logFileID":     logFile.ID,
@@ -580,13 +599,38 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	var chunks [][]models.LogEntry
 	var chunkIndices []int
 
+	// Calculate dynamic chunk size based on total entries
+	// Target: 2-5% of total entries, with minimum 5 and maximum 50 entries per chunk
+	totalEntries := len(entries)
+	targetPercentage := 0.035 // 3.5% (reduced from 7.5% to prevent memory issues)
+	targetChunkSize := int(float64(totalEntries) * targetPercentage)
+
+	// Apply min/max constraints
+	if targetChunkSize < 5 {
+		targetChunkSize = 5
+	} else if targetChunkSize > 50 {
+		targetChunkSize = 50
+	}
+
+	// Calculate number of chunks we'll create
+	totalChunksToCreate := (totalEntries + targetChunkSize - 1) / targetChunkSize // Ceiling division
+
+	logger.Info("[RCA] Dynamic chunk size calculation", map[string]interface{}{
+		"jobID":               jobID,
+		"totalEntries":        totalEntries,
+		"targetPercentage":    targetPercentage,
+		"targetChunkSize":     targetChunkSize,
+		"totalChunksToCreate": totalChunksToCreate,
+		"actualPercentage":    fmt.Sprintf("%.2f%%", float64(targetChunkSize)/float64(totalEntries)*100),
+	})
+
 	if smartChunking {
 		logger.Info("[RCA] Using smart chunking strategy", map[string]interface{}{"jobID": jobID})
 		// Smart chunking: Only create chunks that contain ERROR or FATAL entries
 		var currentChunkIndex int
 
-		for i := 0; i < len(entries); i += 25 { // Reduced from 100 to 25 for faster fail/succeed
-			end := i + 25
+		for i := 0; i < len(entries); i += targetChunkSize {
+			end := i + targetChunkSize
 			if end > len(entries) {
 				end = len(entries)
 			}
@@ -656,9 +700,8 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	} else {
 		logger.Info("[RCA] Using regular chunking strategy", map[string]interface{}{"jobID": jobID})
 		// Regular chunking: include all chunks regardless of error level
-		chunkSize := 25
-		for i := 0; i < len(entries); i += chunkSize {
-			end := i + chunkSize
+		for i := 0; i < len(entries); i += targetChunkSize {
+			end := i + targetChunkSize
 			if end > len(entries) {
 				end = len(entries)
 			}
@@ -735,6 +778,18 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Create a context that is cancelled by either the timeout or jobCancelChan
+	ctx, cancel = context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	cancelCtx, cancelFunc := context.WithCancel(ctx)
+	go func() {
+		select {
+		case <-jobCancelChan:
+			cancelFunc()
+		case <-ctx.Done():
+		}
+	}()
+	defer cancelFunc()
+
 	for i := 0; i < *totalChunks; i++ {
 		wg.Add(1)
 		if err := sem.Acquire(ctx, 1); err != nil {
@@ -787,6 +842,15 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 					errs[idx] = fmt.Errorf("job cancelled during chunk processing")
 					errsMutex.Unlock()
 					return
+				case <-jobCancelChan:
+					logger.Info("[RCA] Chunk cancelled by user during processing", map[string]interface{}{
+						"jobID":      jobID,
+						"chunkIndex": originalChunkIdx + 1,
+					})
+					errsMutex.Lock()
+					errs[idx] = fmt.Errorf("job cancelled by user during chunk processing")
+					errsMutex.Unlock()
+					return
 				default:
 				}
 
@@ -796,7 +860,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 					"attempt":    attempt,
 				})
 
-				analysis, err = js.analyzeChunkWithEnhancedContext(logFile, chunk, jobID, learningInsights, feedbackContext, timeout, model)
+				analysis, err = js.analyzeChunkWithEnhancedContext(cancelCtx, logFile, chunk, jobID, learningInsights, feedbackContext, timeout, model)
 				if err == nil {
 					logger.Info("[RCA] Chunk processed successfully", map[string]interface{}{
 						"jobID":      jobID,
@@ -861,7 +925,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 }
 
 // analyzeChunkWithEnhancedContext analyzes a chunk with learning insights and feedback context
-func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string, timeout int, model string) (*LogAnalysisResponse, error) {
+func (js *JobService) analyzeChunkWithEnhancedContext(ctx context.Context, logFile *models.LogFile, entries []models.LogEntry, jobID uint, learningInsights *LearningInsights, feedbackContext string, timeout int, model string) (*LogAnalysisResponse, error) {
 	// Filter only ERROR and FATAL entries for analysis
 	errorEntries := js.filterErrorEntries(entries)
 	if len(errorEntries) == 0 {
@@ -916,7 +980,7 @@ func (js *JobService) analyzeChunkWithEnhancedContext(logFile *models.LogFile, e
 	}
 	fmt.Println("[LLM] Starting LLM call with prompt", prompt)
 	// Call LLM with the enhanced prompt and timeout using user's endpoint
-	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, &jobID, "rca_analysis_with_feedback", timeout, model)
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(ctx, prompt, *user.LLMEndpoint, &logFile.ID, &jobID, "rca_analysis_with_feedback", timeout, model)
 	if err != nil {
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
 	}
@@ -1015,7 +1079,7 @@ func (js *JobService) aggregatePartialAnalysesWithRaw(logFile *models.LogFile, p
 	})
 
 	// Call LLM for aggregation using user's endpoint with timeout
-	response, err := js.llmService.callLLMWithEndpointAndTimeout(prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout, "")
+	response, err := js.llmService.callLLMWithEndpointAndTimeout(context.Background(), prompt, *user.LLMEndpoint, &logFile.ID, nil, "rca_aggregation", timeout, "")
 	if err != nil {
 		logger.Error("[RCA] LLM aggregation failed", map[string]interface{}{
 			"logFileID": logFile.ID,
@@ -1212,10 +1276,75 @@ func (js *JobService) GetJobStatus(jobID uint) (*models.Job, error) {
 	return &job, nil
 }
 
+// GetJobsByLogFile returns all jobs for a specific log file
 func (js *JobService) GetJobsByLogFile(logFileID uint) ([]models.Job, error) {
 	var jobs []models.Job
-	if err := js.db.Where("log_file_id = ?", logFileID).Find(&jobs).Error; err != nil {
+	if err := js.db.Where("log_file_id = ?", logFileID).Order("created_at DESC").Find(&jobs).Error; err != nil {
 		return nil, err
 	}
 	return jobs, nil
+}
+
+// CancelJob cancels a running job
+func (js *JobService) CancelJob(jobID uint) error {
+	js.jobMutex.Lock()
+	defer js.jobMutex.Unlock()
+
+	// Check if job is active
+	cancelChan, exists := js.activeJobs[jobID]
+	if !exists {
+		return fmt.Errorf("job %d is not active or already completed", jobID)
+	}
+
+	// Send cancellation signal
+	close(cancelChan)
+
+	// Update job status to cancelled
+	now := time.Now()
+	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+		"status":        "cancelled",
+		"error":         "Job cancelled by user",
+		"completed_at":  &now,
+		"current_chunk": 0, // Reset current chunk
+	}).Error; err != nil {
+		logger.Error("Failed to update job status to cancelled", map[string]interface{}{"jobID": jobID, "error": err})
+		return err
+	}
+
+	// Update log file status
+	var job models.Job
+	if err := js.db.First(&job, jobID).Error; err == nil {
+		js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "cancelled")
+	}
+
+	// Remove from active jobs
+	delete(js.activeJobs, jobID)
+
+	logger.Info("Job cancelled successfully", map[string]interface{}{"jobID": jobID})
+	return nil
+}
+
+// IsJobActive checks if a job is currently running
+func (js *JobService) IsJobActive(jobID uint) bool {
+	js.jobMutex.RLock()
+	defer js.jobMutex.RUnlock()
+	_, exists := js.activeJobs[jobID]
+	return exists
+}
+
+// registerJob registers a job as active and returns its cancellation channel
+func (js *JobService) registerJob(jobID uint) chan struct{} {
+	js.jobMutex.Lock()
+	defer js.jobMutex.Unlock()
+
+	cancelChan := make(chan struct{})
+	js.activeJobs[jobID] = cancelChan
+	return cancelChan
+}
+
+// unregisterJob removes a job from active tracking
+func (js *JobService) unregisterJob(jobID uint) {
+	js.jobMutex.Lock()
+	defer js.jobMutex.Unlock()
+	delete(js.activeJobs, jobID)
 }

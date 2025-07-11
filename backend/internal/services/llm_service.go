@@ -108,7 +108,7 @@ func NewLLMService(baseURL, llmModel string) *LLMService {
 		baseURL = "http://localhost:11434"
 	}
 	if llmModel == "" {
-		llmModel = "llama3:8b"
+		llmModel = "llama2:7b"
 	}
 
 	logger.Info("LLMService initialized", map[string]interface{}{
@@ -132,7 +132,7 @@ func NewLLMServiceWithEndpoint(baseURL, llmModel string) *LLMService {
 		baseURL = "http://localhost:11434"
 	}
 	if llmModel == "" {
-		llmModel = "llama3:8b"
+		llmModel = "llama2:7b"
 	}
 
 	logger.Info("LLMService initialized with custom endpoint", map[string]interface{}{
@@ -756,8 +756,8 @@ func (ls *LLMService) callLLMWithEndpoint(prompt string, endpoint string, logFil
 	return ollamaResp.Response, nil
 }
 
-// callLLMWithEndpointAndTimeout makes an LLM call to a specific endpoint with timeout
-func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint string, logFileID *uint, jobID *uint, callType string, timeout int, model string) (string, error) {
+// callLLMWithEndpointAndTimeout makes an LLM call to a specific endpoint with timeout and context
+func (ls *LLMService) callLLMWithEndpointAndTimeout(ctx context.Context, prompt string, endpoint string, logFileID *uint, jobID *uint, callType string, timeout int, model string) (string, error) {
 	startTime := time.Now()
 
 	// Use the provided model if specified, otherwise use the default model
@@ -792,10 +792,6 @@ func (ls *LLMService) callLLMWithEndpointAndTimeout(prompt string, endpoint stri
 	})
 
 	payload := map[string]interface{}{"prompt": prompt, "prompt_length": len(prompt), "timeout": timeout}
-
-	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
 
 	// Create request with context
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
