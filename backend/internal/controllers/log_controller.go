@@ -73,6 +73,16 @@ func (lc *LogController) UploadLogFile(c *gin.Context) {
 		return
 	}
 
+	// Enforce 100MB file size limit
+	if file.Size > 100*1024*1024 {
+		logEntry.Warn("File size exceeds 100MB limit", map[string]interface{}{
+			"filename": file.Filename,
+			"size":     file.Size,
+		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File size exceeds 100MB limit"})
+		return
+	}
+
 	logEntry.Info("File received for upload", map[string]interface{}{
 		"filename": file.Filename,
 		"size":     file.Size,

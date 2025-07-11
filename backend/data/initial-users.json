@@ -6,27 +6,6 @@
       "firstName": "Admin",
       "lastName": "User",
       "role": "admin"
-    },
-    {
-      "email": "manager@autolog.com",
-      "password": "manager123",
-      "firstName": "John",
-      "lastName": "Manager",
-      "role": "manager"
-    },
-    {
-      "email": "responder@autolog.com",
-      "password": "responder123",
-      "firstName": "Sarah",
-      "lastName": "Responder",
-      "role": "responder"
-    },
-    {
-      "email": "viewer@autolog.com",
-      "password": "viewer123",
-      "firstName": "Lisa",
-      "lastName": "Viewer",
-      "role": "viewer"
     }
   ]
 } 

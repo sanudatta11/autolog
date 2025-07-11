@@ -112,6 +112,8 @@ const Logs = () => {
     }
   };
 
+  const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
+
   const handleFileSelect = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -121,6 +123,11 @@ const Logs = () => {
       
       if (!allowedTypes.includes(fileExtension)) {
         setMessage({ text: 'Please select a JSON, LOG, or TXT file', type: 'warning' });
+        return;
+      }
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        setMessage({ text: 'File size exceeds 100MB limit', type: 'error' });
         return;
       }
       

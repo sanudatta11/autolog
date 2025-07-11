@@ -95,8 +95,9 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	defer func() {
 		if !completed {
 			js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-				"status": models.JobStatusFailed,
-				"error":  "Job failed due to shutdown or unexpected exit",
+				"status":        models.JobStatusFailed,
+				"error":         "Job failed due to shutdown or unexpected exit",
+				"current_chunk": 0, // Reset current chunk when failed
 			})
 			// Also set log file rca_analysis_status to 'failed' if logFileID is known
 			if logFileID != nil {
@@ -205,8 +206,9 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 			failMsg = fmt.Sprintf("Chunk %d failed: %s", failedChunk, failMsg)
 		}
 		js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-			"failed_chunk": failedChunk,
-			"total_chunks": totalChunks,
+			"failed_chunk":  failedChunk,
+			"total_chunks":  totalChunks,
+			"current_chunk": 0, // Reset current chunk when failed
 		})
 		js.updateJobStatus(jobID, models.JobStatusFailed, failMsg, map[string]interface{}{
 			"failedChunk": failedChunk,
@@ -267,10 +269,11 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	}
 	completedAt := time.Now()
 	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":       models.JobStatusCompleted,
-		"progress":     100,
-		"result":       finalResult,
-		"completed_at": &completedAt,
+		"status":        models.JobStatusCompleted,
+		"progress":      100,
+		"result":        finalResult,
+		"completed_at":  &completedAt,
+		"current_chunk": 0, // Reset current chunk when completed
 	}).Error; err != nil {
 		logger.Error("Failed to update job completion", map[string]interface{}{"jobID": jobID, "error": err})
 		return
@@ -315,10 +318,11 @@ func (js *JobService) completeJobWithNoRCANeeded(jobID uint, logFileID uint, rea
 	}
 	completedAt := time.Now()
 	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":       models.JobStatusCompleted,
-		"progress":     100,
-		"result":       finalResult,
-		"completed_at": &completedAt,
+		"status":        models.JobStatusCompleted,
+		"progress":      100,
+		"result":        finalResult,
+		"completed_at":  &completedAt,
+		"current_chunk": 0, // Reset current chunk when completed
 	}).Error; err != nil {
 		logger.Error("Failed to update job completion for no RCA needed", map[string]interface{}{"jobID": jobID, "error": err})
 		return
@@ -511,6 +515,16 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 			wg.Done()
 			return nil, fmt.Errorf("failed to acquire semaphore: %w", err)
 		}
+
+		// Update current chunk in database before starting this chunk
+		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", i+1).Error; err != nil {
+			logger.Error("[RCA] Failed to update current chunk in database", map[string]interface{}{
+				"jobID":        jobID,
+				"currentChunk": i + 1,
+				"error":        err,
+			})
+		}
+
 		go func(idx int, chunk []models.LogEntry) {
 			defer wg.Done()
 			defer sem.Release(1)
@@ -825,6 +839,7 @@ func (js *JobService) updateJobStatus(jobID uint, status models.JobStatus, error
 	if status == models.JobStatusFailed || status == models.JobStatusCompleted {
 		now := time.Now()
 		updates["completed_at"] = &now
+		updates["current_chunk"] = 0 // Reset current chunk when job completes or fails
 	}
 
 	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(updates).Error; err != nil {
