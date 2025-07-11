@@ -1110,17 +1110,17 @@ const Logs = () => {
                           </button>
                         </>
                       )}
-                      {(logFile.rcaAnalysisStatus === 'In Progress' || activeJob) ? (
+                      {(logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running' || activeJob) ? (
                         <button
                           onClick={() => cancelRcaJob(activeJob?.id || logFile.rcaAnalysisJobId)}
-                          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+                          className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
                         >
                           Cancel RCA
                         </button>
                       ) : (
                         <button
                           onClick={() => handleDelete(logFile.id)}
-                          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+                          className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
                         >
                           Delete
                         </button>
