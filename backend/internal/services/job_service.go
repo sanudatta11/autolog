@@ -198,7 +198,7 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		timeout = 300 // default fallback
 	}
 
-	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, timeout)
+	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, timeout, true)
 	if err != nil {
 		logger.Error("RCA analysis failed", map[string]interface{}{"jobID": jobID, "error": err})
 		failMsg := err.Error()
@@ -424,7 +424,7 @@ func getAvailableMemoryMB() int {
 	return int(sysinfo.Freeram / 1024 / 1024)
 }
 
-func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, timeout int) ([]*LogAnalysisResponse, error) {
+func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *models.LogFile, failedChunk *int, totalChunks *int, jobID uint, stopChan <-chan struct{}, timeout int, smartChunking bool) ([]*LogAnalysisResponse, error) {
 	var entries []models.LogEntry
 	if err := js.db.Where("log_file_id = ?", logFile.ID).Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("failed to load log entries: %w", err)
@@ -460,24 +460,110 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		}
 	}
 
-	chunkSize := 25 // Reduced from 100 to 25 for faster fail/succeed
-	var chunks [][]models.LogEntry
-	for i := 0; i < len(entries); i += chunkSize {
-		end := i + chunkSize
-		if end > len(entries) {
-			end = len(entries)
-		}
-		chunks = append(chunks, entries[i:end])
-	}
-	*totalChunks = len(chunks)
+	if smartChunking {
+		// Smart chunking: Only create chunks that contain ERROR or FATAL entries
+		var chunks [][]models.LogEntry
+		var chunkIndices []int // Track which original chunk index each error chunk represents
+		var currentChunkIndex int
 
-	// Update TotalChunks in the database before starting LLM processing
-	if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", len(chunks)).Error; err != nil {
-		logger.Error("[RCA] Failed to update total chunks in database", map[string]interface{}{
-			"jobID":       jobID,
-			"totalChunks": len(chunks),
-			"error":       err,
+		for i := 0; i < len(entries); i += 25 { // Reduced from 100 to 25 for faster fail/succeed
+			end := i + 25
+			if end > len(entries) {
+				end = len(entries)
+			}
+
+			chunk := entries[i:end]
+			// Check if this chunk contains any ERROR or FATAL entries
+			hasErrors := false
+			for _, entry := range chunk {
+				if entry.Level == "ERROR" || entry.Level == "FATAL" {
+					hasErrors = true
+					break
+				}
+			}
+
+			// Only include chunks that have errors
+			if hasErrors {
+				chunks = append(chunks, chunk)
+				chunkIndices = append(chunkIndices, currentChunkIndex)
+				logger.Info("[RCA] Smart chunking: Including chunk with errors", map[string]interface{}{
+					"jobID":        jobID,
+					"chunkIndex":   currentChunkIndex,
+					"totalEntries": len(chunk),
+					"hasErrors":    hasErrors,
+				})
+			} else {
+				logger.Info("[RCA] Smart chunking: Skipping chunk without errors", map[string]interface{}{
+					"jobID":        jobID,
+					"chunkIndex":   currentChunkIndex,
+					"totalEntries": len(chunk),
+					"hasErrors":    hasErrors,
+				})
+			}
+			currentChunkIndex++
+		}
+
+		// If no chunks have errors, create a single chunk for analysis
+		if len(chunks) == 0 {
+			logger.Info("[RCA] Smart chunking: No chunks with errors found, creating single chunk for analysis", map[string]interface{}{
+				"jobID": jobID,
+			})
+			chunks = [][]models.LogEntry{entries}
+			chunkIndices = []int{0}
+		}
+
+		*totalChunks = len(chunks)
+
+		// Log smart chunking statistics
+		totalOriginalChunks := currentChunkIndex
+		skippedChunks := totalOriginalChunks - len(chunks)
+		logger.Info("[RCA] Smart chunking completed", map[string]interface{}{
+			"jobID":               jobID,
+			"totalOriginalChunks": totalOriginalChunks,
+			"chunksWithErrors":    len(chunks),
+			"skippedChunks":       skippedChunks,
+			"llmCallsSaved":       skippedChunks,
+			"efficiencyGain":      fmt.Sprintf("%.1f%%", float64(skippedChunks)/float64(totalOriginalChunks)*100),
 		})
+
+		// Update TotalChunks in the database before starting LLM processing
+		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", len(chunks)).Error; err != nil {
+			logger.Error("[RCA] Failed to update total chunks in database", map[string]interface{}{
+				"jobID":       jobID,
+				"totalChunks": len(chunks),
+				"error":       err,
+			})
+		}
+	} else {
+		// Regular chunking: include all chunks regardless of error level
+		chunkSize := 25
+		var chunks [][]models.LogEntry
+		for i := 0; i < len(entries); i += chunkSize {
+			end := i + chunkSize
+			if end > len(entries) {
+				end = len(entries)
+			}
+			chunks = append(chunks, entries[i:end])
+		}
+		*totalChunks = len(chunks)
+
+		// Log regular chunking statistics
+		logger.Info("[RCA] Regular chunking completed", map[string]interface{}{
+			"jobID":               jobID,
+			"totalOriginalChunks": len(entries),
+			"chunksWithErrors":    len(chunks),
+			"llmCallsSaved":       0,
+			"efficiencyGain":      "0.0%",
+		})
+
+		// Update TotalChunks in the database before starting LLM processing
+		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("total_chunks", len(chunks)).Error; err != nil {
+			logger.Error("[RCA] Failed to update total chunks in database", map[string]interface{}{
+				"jobID":       jobID,
+				"totalChunks": len(chunks),
+				"error":       err,
+			})
+		}
 	}
 
 	// Calculate concurrency: 70% of available CPU cores and memory
@@ -495,13 +581,13 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	if memLimit < cpuLimit {
 		concurrency = memLimit
 	}
-	if concurrency > len(chunks) {
-		concurrency = len(chunks)
+	if concurrency > *totalChunks {
+		concurrency = *totalChunks
 	}
-	logger.Info("[RCA] Dynamic concurrency calculation", map[string]interface{}{"cpuLimit": cpuLimit, "memLimit": memLimit, "finalConcurrency": concurrency, "availableMB": memMB, "maxProcs": maxProcs, "chunks": len(chunks)})
+	logger.Info("[RCA] Dynamic concurrency calculation", map[string]interface{}{"cpuLimit": cpuLimit, "memLimit": memLimit, "finalConcurrency": concurrency, "availableMB": memMB, "maxProcs": maxProcs, "totalChunks": *totalChunks})
 
-	results := make([]*LogAnalysisResponse, len(chunks))
-	errs := make([]error, len(chunks))
+	results := make([]*LogAnalysisResponse, *totalChunks)
+	errs := make([]error, *totalChunks)
 	var errsMutex sync.Mutex // Add mutex for thread-safe error writing
 
 	var wg sync.WaitGroup
@@ -509,7 +595,7 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	for i, chunk := range chunks {
+	for i := 0; i < *totalChunks; i++ {
 		wg.Add(1)
 		if err := sem.Acquire(ctx, 1); err != nil {
 			wg.Done()
@@ -517,15 +603,17 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 		}
 
 		// Update current chunk in database before starting this chunk
-		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", i+1).Error; err != nil {
+		// Use the original chunk index for display purposes
+		originalChunkIndex := i + 1
+		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Update("current_chunk", originalChunkIndex).Error; err != nil {
 			logger.Error("[RCA] Failed to update current chunk in database", map[string]interface{}{
 				"jobID":        jobID,
-				"currentChunk": i + 1,
+				"currentChunk": originalChunkIndex,
 				"error":        err,
 			})
 		}
 
-		go func(idx int, chunk []models.LogEntry) {
+		go func(idx int, chunk []models.LogEntry, originalChunkIdx int) {
 			defer wg.Done()
 			defer sem.Release(1)
 
@@ -555,10 +643,10 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 				time.Sleep(500 * time.Millisecond)
 			}
 			errsMutex.Lock()
-			errs[idx] = fmt.Errorf("chunk %d analysis failed after 3 retries: %w", idx+1, err)
+			errs[idx] = fmt.Errorf("chunk %d analysis failed after 3 retries: %w", originalChunkIdx+1, err)
 			errsMutex.Unlock()
 			cancel()
-		}(i, chunk)
+		}(i, chunks[i], i) // Pass the original chunk index
 	}
 	wg.Wait()
 
@@ -566,8 +654,13 @@ func (js *JobService) performRCAAnalysisWithErrorTrackingAndChunkCount(logFile *
 	var partialResults []*LogAnalysisResponse
 	for i, res := range results {
 		if errs[i] != nil {
+			// Use the original chunk index for failed chunk reporting
 			*failedChunk = i + 1
-			logger.Error("[RCA] Chunk analysis failed after retries", map[string]interface{}{"jobID": jobID, "chunk": i + 1, "error": errs[i].Error()})
+			logger.Error("[RCA] Chunk analysis failed after retries", map[string]interface{}{
+				"jobID": jobID,
+				"chunk": i + 1,
+				"error": errs[i].Error(),
+			})
 			return nil, errs[i]
 		}
 		partialResults = append(partialResults, res)

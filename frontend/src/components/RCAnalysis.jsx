@@ -22,6 +22,7 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [llmTimeout, setLlmTimeout] = useState(300); // default 300 seconds
   const [useChunking, setUseChunking] = useState(true);
+  const [useSmartChunking, setUseSmartChunking] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [logFileDetails, setLogFileDetails] = useState(null);
   const { pollingEnabled, setPollingEnabled } = React.useContext(PollingContext);
@@ -245,6 +246,7 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
       const response = await api.post(`/logs/${logFileId}/analyze`, {
         timeout: llmTimeout,
         chunking: useChunking,
+        smartChunking: useSmartChunking, // <-- new
       });
       
       console.log('New RCA run response:', response.data);
@@ -435,6 +437,30 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
                   <span className="ml-1 text-sm">No</span>
                 </label>
               </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Smart Chunking</label>
+              <div className="flex items-center space-x-4">
+                <label className="inline-flex items-center">
+                  <input
+                    type="radio"
+                    checked={useSmartChunking}
+                    onChange={() => setUseSmartChunking(true)}
+                    className="form-radio"
+                  />
+                  <span className="ml-1 text-sm">Yes (skip non-error chunks)</span>
+                </label>
+                <label className="inline-flex items-center">
+                  <input
+                    type="radio"
+                    checked={!useSmartChunking}
+                    onChange={() => setUseSmartChunking(false)}
+                    className="form-radio"
+                  />
+                  <span className="ml-1 text-sm">No (analyze all chunks)</span>
+                </label>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">When enabled, only log chunks with ERROR or FATAL entries are analyzed. Disable to include all log lines (may be slower).</div>
             </div>
         </div>
       )}

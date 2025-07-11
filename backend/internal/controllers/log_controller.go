@@ -527,12 +527,14 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 	type AnalyzeOptions struct {
 		Timeout  int  `json:"timeout"`
 		Chunking bool `json:"chunking"`
+		SmartChunking bool `json:"smartChunking"`
 	}
 	var opts AnalyzeOptions
 	if err := c.ShouldBindJSON(&opts); err != nil {
 		// fallback to defaults if not provided
 		opts.Timeout = 300
 		opts.Chunking = true
+		opts.SmartChunking = true // default to smart chunking enabled
 	}
 
 	// Enforce required fields and valid values
@@ -593,7 +595,7 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 	}
 
 	// Create and process RCA job with options
-	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking)
+	job, err := lc.jobService.CreateRCAAnalysisJobWithOptions(logFile.ID, opts.Timeout, opts.Chunking, opts.SmartChunking)
 	if err != nil {
 		logger.WithError(err, "log_controller").Error("Failed to create RCA analysis job", map[string]interface{}{
 			"log_file_id": logFile.ID,
