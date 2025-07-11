@@ -40,6 +40,7 @@ services:
       ENV: development
       PORT: 8080
       OLLAMA_MODEL: codellama:7b
+      OLLAMA_EMBED_MODEL: nomic-embed-text:latest
       LOGPARSER_URL: http://logparser-service:8001
     depends_on:
       postgres:

@@ -320,83 +320,152 @@ const Logs = () => {
     }
   };
 
-  // Helper to generate PDF from RCA data
-  const handleDownloadRcaPdf = () => {
+  // Replace handleDownloadRcaPdf with improved version
+  const handleDownloadRcaPdf = async () => {
     if (!llmModalAnalysis) return;
     let analysis = llmModalAnalysis;
     if (analysis && typeof analysis === 'object') {
       if ('final' in analysis) analysis = analysis.final;
       else if ('analysis' in analysis) analysis = analysis.analysis;
     }
+    // Load logo image as base64
+    const logoUrl = '/autolog.png';
+    const getImageBase64 = (url) => new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = function () {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+    const logoBase64 = await getImageBase64(logoUrl);
     const doc = new jsPDF();
-    let y = 10;
-    doc.setFontSize(16);
-    doc.text(`Root Cause Analysis for: ${llmModalLogFile?.filename || ''}`, 10, y);
-    y += 10;
+    // Add logo
+    doc.addImage(logoBase64, 'PNG', 10, 8, 32, 16);
+    // Branding/Header
+    doc.setFontSize(18);
+    doc.setTextColor(40, 40, 80);
+    doc.text('AutoLog - Root Cause Analysis Report', 105, 18, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 200, 10, { align: 'right' });
+    doc.setDrawColor(40, 40, 80);
+    doc.line(10, 22, 200, 22);
+    let y = 28;
     doc.setFontSize(12);
-    doc.text(`Summary: ${analysis.summary || ''}`, 10, y);
+    doc.setTextColor(0);
+    doc.text(`Log File: ${llmModalLogFile?.filename || ''}`, 14, y);
     y += 8;
-    doc.text(`Severity: ${analysis.severity || ''}`, 10, y);
-    y += 8;
-    if (analysis.rootCause) {
-      doc.text(`Root Cause: ${analysis.rootCause}`, 10, y);
-      y += 8;
-    }
+    // Summary/Metadata Table
+    autoTable(doc, {
+      startY: y,
+      head: [['Summary', 'Severity', 'Root Cause']],
+      body: [[
+        analysis.summary || '-',
+        analysis.severity || '-',
+        analysis.rootCause || '-'
+      ]],
+      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: { fillColor: [40, 40, 80], textColor: 255, fontStyle: 'bold' },
+      margin: { left: 14, right: 14 },
+      tableWidth: 'auto',
+      columnStyles: {
+        0: { cellWidth: 60 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 80 },
+      },
+    });
+    y = doc.lastAutoTable.finalY + 4;
+    // Recommendations
+    doc.setFont(undefined, 'bold');
+    doc.text('Recommendations', 14, y);
+    doc.setFont(undefined, 'normal');
     if (Array.isArray(analysis.recommendations) && analysis.recommendations.length > 0) {
-      doc.text('Recommendations:', 10, y);
-      y += 8;
       analysis.recommendations.forEach((rec) => {
-        doc.text(`- ${rec}`, 14, y);
         y += 7;
+        const recLines = doc.splitTextToSize(`- ${rec}`, 170);
+        doc.text(recLines, 20, y);
+        y += (recLines.length - 1) * 6;
       });
-    }
-    y += 4;
-    if (typeof analysis.criticalErrors === 'number') {
-      doc.text(`Critical Errors: ${analysis.criticalErrors}`, 10, y);
+    } else {
       y += 7;
+      doc.text('-', 20, y);
     }
-    if (typeof analysis.nonCriticalErrors === 'number') {
-      doc.text(`Non-critical Errors: ${analysis.nonCriticalErrors}`, 10, y);
-      y += 7;
-    }
-    if (typeof analysis.errorCount === 'number') {
-      doc.text(`Total Errors: ${analysis.errorCount}`, 10, y);
-      y += 7;
-    }
-    if (typeof analysis.warningCount === 'number') {
-      doc.text(`Warnings: ${analysis.warningCount}`, 10, y);
-      y += 7;
-    }
+    y += 10;
+    // Error counts
+    autoTable(doc, {
+      startY: y,
+      head: [['Critical Errors', 'Non-critical Errors']],
+      body: [[
+        analysis.criticalErrors ?? '-',
+        analysis.nonCriticalErrors ?? '-'
+      ]],
+      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: { fillColor: [40, 40, 80], textColor: 255, fontStyle: 'bold' },
+      margin: { left: 14, right: 14 },
+      tableWidth: 'auto',
+      columnStyles: {
+        0: { cellWidth: 40 },
+        1: { cellWidth: 40 },
+      },
+    });
+    y = doc.lastAutoTable.finalY + 8;
+    // Error Analysis Table
+    doc.setFont(undefined, 'bold');
+    doc.text('Error Analysis', 14, y);
     y += 4;
     if (Array.isArray(analysis.errorAnalysis) && analysis.errorAnalysis.length > 0) {
-      doc.text('Error Analysis:', 10, y);
-      y += 8;
-      // Table header
-      doc.setFont(undefined, 'bold');
-      doc.text('Pattern', 10, y);
-      doc.text('Count', 50, y);
-      doc.text('Severity', 65, y);
-      doc.text('First', 85, y);
-      doc.text('Last', 120, y);
-      doc.text('Root Cause', 10, y + 6);
-      doc.text('Impact', 50, y + 6);
-      doc.text('Fix', 85, y + 6);
-      doc.setFont(undefined, 'normal');
-      y += 12;
-      analysis.errorAnalysis.forEach((err) => {
-        if (y > 270) { doc.addPage(); y = 10; }
-        doc.text(String(err.errorPattern || ''), 10, y);
-        doc.text(String(err.errorCount || ''), 50, y);
-        doc.text(String(err.severity || ''), 65, y);
-        doc.text(String(err.firstOccurrence || ''), 85, y);
-        doc.text(String(err.lastOccurrence || ''), 120, y);
-        y += 6;
-        doc.text(String(err.rootCause || ''), 10, y);
-        doc.text(String(err.impact || ''), 50, y);
-        doc.text(String(err.fix || ''), 85, y);
-        y += 8;
+      autoTable(doc, {
+        startY: y + 2,
+        head: [[
+          'Pattern', 'Count', 'Severity', 'First', 'Last',
+          'Root Cause', 'Impact', 'Fix', 'Related'
+        ]],
+        body: analysis.errorAnalysis.map((err) => [
+          err.errorPattern || '',
+          err.errorCount || '',
+          err.severity || '',
+          err.firstOccurrence || '',
+          err.lastOccurrence || '',
+          err.rootCause || '',
+          err.impact || '',
+          err.fix || '',
+          (Array.isArray(err.relatedErrors) && err.relatedErrors.length > 0)
+            ? err.relatedErrors.join(', ') : '-'
+        ]),
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [40, 40, 80], textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [245, 245, 255] },
+        margin: { left: 10, right: 10 },
+        tableWidth: 'wrap',
+        columnStyles: {
+          0: { cellWidth: 28 }, // Pattern
+          1: { cellWidth: 12 }, // Count
+          2: { cellWidth: 16 }, // Severity
+          3: { cellWidth: 22 }, // First
+          4: { cellWidth: 22 }, // Last
+          5: { cellWidth: 32 }, // Root Cause
+          6: { cellWidth: 32 }, // Impact
+          7: { cellWidth: 32 }, // Fix
+          8: { cellWidth: 22 }, // Related
+        },
       });
+      y = doc.lastAutoTable.finalY + 10;
+    } else {
+      y += 8;
+      doc.setFont(undefined, 'normal');
+      doc.text('No error analysis data available.', 14, y);
     }
+    // Footer
+    doc.setFontSize(10);
+    doc.setTextColor(120);
+    doc.text('© 2024 AutoLog. All rights reserved.', 105, 290, { align: 'center' });
     doc.save(`RCA_${llmModalLogFile?.filename || 'report'}.pdf`);
   };
 

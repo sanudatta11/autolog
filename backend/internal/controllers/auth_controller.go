@@ -205,11 +205,19 @@ func (ac *AuthController) ChangePassword(c *gin.Context) {
 
 func (ac *AuthController) generateToken(userID uint) (string, time.Time, error) {
 	expiresAt := time.Now().Add(24 * time.Hour)
-	claims := jwt.MapClaims{
-		"user_id": strconv.FormatUint(uint64(userID), 10),
-		"exp":     expiresAt.Unix(),
+	// Fetch user to get role and other info
+	var user models.User
+	if err := ac.db.First(&user, userID).Error; err != nil {
+		return "", time.Time{}, err
 	}
-
+	claims := jwt.MapClaims{
+		"user_id":   strconv.FormatUint(uint64(userID), 10),
+		"role":      user.Role,
+		"email":     user.Email,
+		"firstName": user.FirstName,
+		"lastName":  user.LastName,
+		"exp":       expiresAt.Unix(),
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
 	return tokenString, expiresAt, err

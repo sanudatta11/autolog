@@ -208,6 +208,26 @@ func (uc *UserController) RemoveUser(c *gin.Context) {
 		return
 	}
 
+	// Check if the user to be deleted is an admin
+	var userToDelete models.User
+	if err := uc.db.First(&userToDelete, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	if userToDelete.Role == "ADMIN" {
+		// Count number of admins
+		var adminCount int64
+		if err := uc.db.Model(&models.User{}).Where("role = ?", "ADMIN").Count(&adminCount).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check admin count"})
+			return
+		}
+		if adminCount <= 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "At least one admin must remain in the system"})
+			return
+		}
+	}
+
 	if err := uc.db.Delete(&models.User{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 		return

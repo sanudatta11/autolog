@@ -361,6 +361,7 @@ function UserManagement() {
   const [addError, setAddError] = useState('')
   const [addSuccess, setAddSuccess] = useState('')
   const { user } = useAuth()
+  const [deleteError, setDeleteError] = useState('')
 
   React.useEffect(() => {
     fetchUsers()
@@ -403,12 +404,13 @@ function UserManagement() {
   }
 
   const handleDeleteUser = async (id) => {
+    setDeleteError('')
     if (!window.confirm('Are you sure you want to delete this user?')) return
     try {
       await adminUsersAPI.deleteAdminUser(id)
       fetchUsers()
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete user')
+      setDeleteError(err.response?.data?.error || 'Failed to delete user')
     }
   }
 
@@ -427,6 +429,9 @@ function UserManagement() {
   
   // Check if user can delete users (admin only)
   const canDeleteUsers = user?.role === 'ADMIN'
+
+  // Count number of admins
+  const adminCount = users.filter(u => u.role === 'ADMIN').length
 
   if (loading) {
     return (
@@ -456,6 +461,11 @@ function UserManagement() {
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
           {error}
+        </div>
+      )}
+      {deleteError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
+          {deleteError}
         </div>
       )}
 
@@ -491,36 +501,44 @@ function UserManagement() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {users.map((userItem) => (
-                  <tr key={userItem.id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        {userItem.firstName} {userItem.lastName}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{userItem.email}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(userItem.role)}`}>
-                        {userItem.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(userItem.createdAt).toLocaleDateString()}
-                    </td>
-                    {canDeleteUsers && (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button
-                          onClick={() => handleDeleteUser(userItem.id)}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          Delete
-                        </button>
+                {users.map((userItem) => {
+                  const isCurrentUser = userItem.id === user?.id
+                  const isAdmin = userItem.role === 'ADMIN'
+                  // Only allow delete if not current user, and if admin, only if more than 1 admin
+                  const canDeleteThisUser = canDeleteUsers && !isCurrentUser && (!isAdmin || adminCount > 1)
+                  return (
+                    <tr key={userItem.id}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">
+                          {userItem.firstName} {userItem.lastName}
+                        </div>
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{userItem.email}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(userItem.role)}`}>
+                          {userItem.role}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {new Date(userItem.createdAt).toLocaleDateString()}
+                      </td>
+                      {canDeleteUsers && (
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <button
+                            onClick={() => canDeleteThisUser ? handleDeleteUser(userItem.id) : null}
+                            className={`text-red-600 hover:text-red-900 ${!canDeleteThisUser ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={!canDeleteThisUser}
+                            title={isCurrentUser ? 'You cannot delete your own account' : (isAdmin && adminCount <= 1 ? 'At least one admin must remain' : 'Delete user')}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
