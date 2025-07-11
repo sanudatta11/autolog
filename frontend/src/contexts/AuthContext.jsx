@@ -15,6 +15,7 @@ export function useAuth() {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [token, setToken] = useState(localStorage.getItem('token'))
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -24,6 +25,7 @@ export function AuthProvider({ children }) {
       // Update API base URL with stored backend URL
       api.defaults.baseURL = backendUrl
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      setToken(token)
       fetchCurrentUser(token)
     } else {
       setLoading(false)
@@ -40,6 +42,7 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('token')
         delete api.defaults.headers.common['Authorization']
         setUser(null)
+        setToken(null)
       }
       // For other errors (e.g., network), keep the token and show loading as false
     } finally {
@@ -58,6 +61,7 @@ export function AuthProvider({ children }) {
       if (token) {
         localStorage.setItem('token', token)
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+        setToken(token)
       }
       setUser(user)
       return { success: true }
@@ -74,13 +78,19 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('backendUrl')
     delete api.defaults.headers.common['Authorization']
     setUser(null)
+    setToken(null)
+  }
+
+  const getToken = () => {
+    return localStorage.getItem('token')
   }
 
   const value = {
     user,
     login,
     logout,
-    loading
+    loading,
+    token
   }
 
   return (

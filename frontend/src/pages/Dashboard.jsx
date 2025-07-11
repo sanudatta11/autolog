@@ -7,7 +7,6 @@ function Dashboard() {
     totalLogs: 0,
     analyzedLogs: 0,
     rcaReports: 0,
-    activeConnectors: 0,
     anomalies: 0
   })
   const [recentAnalyses, setRecentAnalyses] = useState([])
@@ -27,7 +26,6 @@ function Dashboard() {
         totalLogs: logs.length,
         analyzedLogs: logs.filter(l => l.status === 'completed').length,
         rcaReports: logs.filter(l => l.rcaAnalysisStatus === 'completed').length,
-        activeConnectors: 0, // Set to 0 or fetch from backend if available
         anomalies: logs.filter(l => l.errorCount > 0).length
       };
       setStats(stats);
@@ -79,7 +77,7 @@ function Dashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="card p-6">
           <div className="flex items-center">
             <div className="p-2 bg-blue-100 rounded-lg">
@@ -118,18 +116,6 @@ function Dashboard() {
 
         <div className="card p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-indigo-100 rounded-lg">
-              <span className="text-2xl">🔗</span>
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Active Connectors</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats.activeConnectors}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card p-6">
-          <div className="flex items-center">
             <div className="p-2 bg-red-100 rounded-lg">
               <span className="text-2xl">⚠️</span>
             </div>
@@ -137,60 +123,6 @@ function Dashboard() {
               <p className="text-sm font-medium text-gray-600">Anomalies</p>
               <p className="text-2xl font-semibold text-gray-900">{stats.anomalies}</p>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Log Connectors Status */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="card p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <div className="p-2 bg-orange-100 rounded-lg">
-                <span className="text-xl">☁️</span>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-gray-900">CloudWatch</h3>
-                <p className="text-sm text-gray-500">AWS Logs</p>
-              </div>
-            </div>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-              Connected
-            </span>
-          </div>
-        </div>
-
-        <div className="card p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <span className="text-xl">🔍</span>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-gray-900">Splunk</h3>
-                <p className="text-sm text-gray-500">Enterprise Logs</p>
-              </div>
-            </div>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-              Connected
-            </span>
-          </div>
-        </div>
-
-        <div className="card p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <div className="p-2 bg-gray-100 rounded-lg">
-                <span className="text-xl">📁</span>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-gray-900">File Upload</h3>
-                <p className="text-sm text-gray-500">Local Files</p>
-              </div>
-            </div>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-              Available
-            </span>
           </div>
         </div>
       </div>

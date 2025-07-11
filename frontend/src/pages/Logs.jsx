@@ -15,6 +15,7 @@ import {
 } from '../constants';
 import { PollingContext } from '../components/Layout';
 import Toast from '../components/Toast';
+import { getApiUrl } from '../services/api';
 
 const Logs = () => {
   const { token } = useAuth();
@@ -56,10 +57,10 @@ const Logs = () => {
   const [availableModels, setAvailableModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Job tracking state
-  const [activeJobs, setActiveJobs] = useState({}); // logFileId -> jobId
-  const [jobStatuses, setJobStatuses] = useState({}); // jobId -> status
-  const [jobProgress, setJobProgress] = useState({}); // jobId -> progress
+  // Job tracking state - REMOVED
+  // const [activeJobs, setActiveJobs] = useState({}); // logFileId -> jobId
+  // const [jobStatuses, setJobStatuses] = useState({}); // jobId -> status
+  // const [jobProgress, setJobProgress] = useState({}); // jobId -> progress
 
   const [uploadLimit, setUploadLimit] = useState(5 * 1024 * 1024); // Default 5MB
 
@@ -101,19 +102,19 @@ const Logs = () => {
     fetchUserRole();
   }, []);
 
-  // Poll job status for active jobs
-  useEffect(() => {
-    const activeJobIds = Object.values(activeJobs);
-    if (activeJobIds.length === 0) return;
+  // Poll job status for active jobs - REMOVED
+  // useEffect(() => {
+  //   const activeJobIds = Object.values(activeJobs);
+  //   if (activeJobIds.length === 0) return;
 
-    const interval = setInterval(async () => {
-      for (const jobId of activeJobIds) {
-        await fetchJobStatus(jobId);
-      }
-    }, 2000); // Poll every 2 seconds
+  //   const interval = setInterval(async () => {
+  //     for (const jobId of activeJobIds) {
+  //       await fetchJobStatus(jobId);
+  //     }
+  //   }, 2000); // Poll every 2 seconds
 
-    return () => clearInterval(interval);
-  }, [activeJobs]);
+  //   return () => clearInterval(interval);
+  // }, [activeJobs]);
 
   const fetchUserRole = async () => {
     try {
@@ -274,10 +275,26 @@ const Logs = () => {
     setLoadingModels(true);
     try {
       const response = await api.get('/logs/available-models');
-      setAvailableModels(response.data.models || []);
+      const allModels = response.data.models || [];
+      
+      // Filter out embedding models
+      const filteredModels = allModels.filter(model => {
+        const modelLower = model.toLowerCase();
+        return !modelLower.includes('embed') && 
+               !modelLower.includes('nomic') && 
+               !modelLower.includes('all-minilm') && 
+               !modelLower.includes('all-mpnet') && 
+               !modelLower.includes('sentence') &&
+               !modelLower.includes('text-embedding') &&
+               !modelLower.includes('ada-002') &&
+               !modelLower.includes('bge-') &&
+               !modelLower.includes('e5-');
+      });
+      
+      setAvailableModels(filteredModels);
       // Set the first model as default if available
-      if (response.data.models && response.data.models.length > 0) {
-        setSelectedModel(response.data.models[0]);
+      if (filteredModels.length > 0) {
+        setSelectedModel(filteredModels[0]);
       }
     } catch (error) {
       console.error('Failed to fetch available models:', error);
@@ -296,7 +313,7 @@ const Logs = () => {
 
     try {
       setRcaError('');
-      const response = await fetch(`/api/v1/logs/${rcaTargetLogFileId}/analyze`, {
+      const response = await fetch(getApiUrl(`/logs/${rcaTargetLogFileId}/analyze`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -325,11 +342,9 @@ const Logs = () => {
       setRcaError('');
 
       // Track the job if we have a job ID
-      if (data.jobId) {
-        setActiveJobs(prev => ({ ...prev, [rcaTargetLogFileId]: data.jobId }));
-        setJobStatuses(prev => ({ ...prev, [data.jobId]: 'pending' }));
-        setJobProgress(prev => ({ ...prev, [data.jobId]: 0 }));
-      }
+      // setActiveJobs(prev => ({ ...prev, [rcaTargetLogFileId]: data.jobId }));
+      // setJobStatuses(prev => ({ ...prev, [data.jobId]: 'pending' }));
+      // setJobProgress(prev => ({ ...prev, [data.jobId]: 0 }));
 
       // Show success message
       alert('RCA analysis started successfully! You can monitor the progress in the job status section.');
@@ -348,7 +363,7 @@ const Logs = () => {
     }
 
     try {
-      const response = await fetch(`/api/v1/jobs/${jobId}/cancel`, {
+      const response = await fetch(getApiUrl(`/jobs/${jobId}/cancel`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -370,40 +385,6 @@ const Logs = () => {
       console.error('Cancel RCA analysis error:', error);
       alert(`Failed to cancel RCA analysis: ${error.message}`);
     }
-  };
-
-  const fetchJobStatus = async (jobId) => {
-    try {
-      const response = await fetch(`/api/v1/jobs/${jobId}/status`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const job = await response.json();
-        setJobStatuses(prev => ({ ...prev, [jobId]: job.status }));
-        setJobProgress(prev => ({ ...prev, [jobId]: job.progress || 0 }));
-        
-        // If job is completed or failed, remove from active jobs
-        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-          setActiveJobs(prev => {
-            const newActiveJobs = { ...prev };
-            Object.keys(newActiveJobs).forEach(logFileId => {
-              if (newActiveJobs[logFileId] === jobId) {
-                delete newActiveJobs[logFileId];
-              }
-            });
-            return newActiveJobs;
-          });
-        }
-        
-        return job;
-      }
-    } catch (error) {
-      console.error('Failed to fetch job status:', error);
-    }
-    return null;
   };
 
   const handleDelete = (logFileId) => {
@@ -1110,9 +1091,9 @@ const Logs = () => {
                           </button>
                         </>
                       )}
-                      {(logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running' || activeJob) ? (
+                      {(logFile.rcaAnalysisStatus === 'pending' || logFile.rcaAnalysisStatus === 'running') ? (
                         <button
-                          onClick={() => cancelRcaJob(activeJob?.id || logFile.rcaAnalysisJobId)}
+                          onClick={() => cancelRcaJob(logFile.rcaAnalysisJobId)}
                           className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
                         >
                           Cancel RCA
@@ -1133,65 +1114,6 @@ const Logs = () => {
           </div>
         )}
       </div>
-
-      {/* Active Jobs Status */}
-      {Object.keys(activeJobs).length > 0 && (
-        <div className="bg-white rounded-lg shadow-md p-6 mt-6">
-          <h2 className="text-xl font-semibold mb-4">🔄 Active RCA Jobs</h2>
-          <div className="space-y-4">
-            {Object.entries(activeJobs).map(([logFileId, jobId]) => {
-              const logFile = logFiles.find(lf => lf.id.toString() === logFileId);
-              const status = jobStatuses[jobId] || 'pending';
-              const progress = jobProgress[jobId] || 0;
-              
-              return (
-                <div key={jobId} className="border border-gray-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <h3 className="font-semibold">
-                        {logFile ? logFile.filename : `Job ${jobId}`}
-                      </h3>
-                      <div className="text-sm text-gray-600 mt-1">
-                        <span>Job ID: {jobId}</span>
-                        <span className="mx-2">•</span>
-                        <span>Status: {status}</span>
-                        <span className="mx-2">•</span>
-                        <span>Progress: {progress}%</span>
-                      </div>
-                      {progress > 0 && (
-                        <div className="mt-2">
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div 
-                              className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                              style={{ width: `${progress}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex space-x-2">
-                      {status === 'running' || status === 'pending' ? (
-                        <button
-                          onClick={() => cancelRcaJob(jobId)}
-                          className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
-                        >
-                          Cancel
-                        </button>
-                      ) : (
-                        <span className="text-sm text-gray-500">
-                          {status === 'completed' ? 'Completed' : 
-                           status === 'failed' ? 'Failed' : 
-                           status === 'cancelled' ? 'Cancelled' : status}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Log File Details */}
       {selectedLogFile && (

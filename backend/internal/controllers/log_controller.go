@@ -1597,7 +1597,7 @@ func (lc *LogController) CancelRCAAnalysis(c *gin.Context) {
 		"path":   c.Request.URL.Path,
 	})
 
-	jobID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	jobID, err := strconv.ParseUint(c.Param("jobId"), 10, 32)
 	if err != nil {
 		logger.WithError(err, "log_controller").Error("Invalid job ID")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
@@ -1606,47 +1606,32 @@ func (lc *LogController) CancelRCAAnalysis(c *gin.Context) {
 
 	// Check if user owns this job
 	var job models.Job
-	if err := lc.db.Preload("LogFile").First(&job, jobID).Error; err != nil {
+	if err := lc.db.First(&job, jobID).Error; err != nil {
 		logger.WithError(err, "log_controller").Error("Job not found")
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
+	if job.LogFileID != 0 {
+		var logFile models.LogFile
+		if err := lc.db.First(&logFile, job.LogFileID).Error; err == nil {
+			if logFile.UploadedBy != userID.(uint) {
+				logEntry.Warn("Access denied for RCA job cancellation", map[string]interface{}{
+					"job_id":  job.ID,
+					"user_id": userID.(uint),
+				})
+				c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+				return
+			}
+		}
+	}
 
-	// Check if user owns the log file
-	if job.LogFile.UploadedBy != userID.(uint) {
-		logEntry.Warn("Access denied for job cancellation", map[string]interface{}{
-			"job_id":  jobID,
-			"user_id": userID,
-		})
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
+	err = lc.jobService.CancelJob(uint(jobID))
+	if err != nil {
+		logger.WithError(err, "log_controller").Error("Failed to cancel RCA job")
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Check if job is running
-	if job.Status != "running" && job.Status != "pending" {
-		logEntry.Warn("Cannot cancel job that is not running", map[string]interface{}{
-			"job_id": jobID,
-			"status": job.Status,
-		})
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot cancel job that is not running"})
-		return
-	}
-
-	// Cancel the job
-	if err := lc.jobService.CancelJob(uint(jobID)); err != nil {
-		logger.WithError(err, "log_controller").Error("Failed to cancel job", map[string]interface{}{
-			"job_id": jobID,
-		})
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to cancel job: %v", err)})
-		return
-	}
-
-	logEntry.Info("RCA analysis job cancelled successfully", map[string]interface{}{
-		"job_id": jobID,
-	})
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "RCA analysis job cancelled successfully",
-		"jobId":   jobID,
-	})
+	logEntry.Info("RCA job cancelled successfully", map[string]interface{}{"job_id": jobID})
+	c.JSON(http.StatusOK, gin.H{"message": "RCA job cancelled successfully"})
 }
