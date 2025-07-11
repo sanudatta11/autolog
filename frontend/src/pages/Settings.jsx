@@ -112,6 +112,8 @@ function LLMSettings() {
   const [isTested, setIsTested] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const { user } = useAuth()
+  const [availableModels, setAvailableModels] = useState([]);
+  const [modelDownloadStatus, setModelDownloadStatus] = useState({}); // { modelName: 'idle'|'loading'|'success'|'error' }
 
   React.useEffect(() => {
     fetchLLMEndpoint()
@@ -199,6 +201,32 @@ function LLMSettings() {
   }
 
   const isURLValid = validateURL(llmEndpoint)
+
+  // Fetch models after endpoint is tested or saved
+  const fetchAvailableModels = async () => {
+    try {
+      const response = await api.get('/settings/llm-models');
+      setAvailableModels(response.data.models || []);
+    } catch (err) {
+      setAvailableModels([]);
+    }
+  };
+
+  // Call fetchAvailableModels after successful test/save
+  React.useEffect(() => {
+    if (isTested && llmEndpoint) fetchAvailableModels();
+  }, [isTested, llmEndpoint]);
+
+  // Download model handler
+  const handleDownloadModel = async (modelName) => {
+    setModelDownloadStatus((prev) => ({ ...prev, [modelName]: 'loading' }));
+    try {
+      await api.post('/settings/llm-pull-model', { model: modelName });
+      setModelDownloadStatus((prev) => ({ ...prev, [modelName]: 'success' }));
+    } catch (err) {
+      setModelDownloadStatus((prev) => ({ ...prev, [modelName]: 'error' }));
+    }
+  };
 
   if (loading) {
     return (
@@ -316,6 +344,33 @@ function LLMSettings() {
           </form>
         </div>
       </div>
+
+      {isTested && availableModels.length > 0 && (
+        <div className="card">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-lg font-medium text-gray-900">Available Models</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Models available on your LLM endpoint. You can download them for local use.
+            </p>
+          </div>
+          <div className="p-6">
+            <ul className="space-y-2">
+              {availableModels.map((model) => (
+                <li key={model} className="flex items-center justify-between bg-gray-50 rounded p-2">
+                  <span className="font-mono text-sm">{model}</span>
+                  <button
+                    className={`btn btn-sm ml-4 ${modelDownloadStatus[model] === 'success' ? 'bg-green-200 text-green-800' : modelDownloadStatus[model] === 'error' ? 'bg-red-200 text-red-800' : 'bg-blue-600 text-white'}`}
+                    disabled={modelDownloadStatus[model] === 'loading' || modelDownloadStatus[model] === 'success'}
+                    onClick={() => handleDownloadModel(model)}
+                  >
+                    {modelDownloadStatus[model] === 'loading' ? 'Downloading...' : modelDownloadStatus[model] === 'success' ? 'Downloaded' : 'Download'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="px-6 py-4 border-b border-gray-200">

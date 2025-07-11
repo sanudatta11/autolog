@@ -51,6 +51,18 @@ func NewLogController(db *gorm.DB, llmService *services.LLMService, stopChan <-c
 	}
 }
 
+func getMaxFileSize() int64 {
+	maxSizeStr := os.Getenv("MAX_FILE_SIZE")
+	if maxSizeStr == "" {
+		return 5 * 1024 * 1024 // Default 5MB
+	}
+	maxSize, err := strconv.ParseInt(maxSizeStr, 10, 64)
+	if err != nil || maxSize <= 0 {
+		return 5 * 1024 * 1024
+	}
+	return maxSize
+}
+
 // UploadLogFile handles log file upload
 func (lc *LogController) UploadLogFile(c *gin.Context) {
 	userID, exists := c.Get("userID")
@@ -73,13 +85,14 @@ func (lc *LogController) UploadLogFile(c *gin.Context) {
 		return
 	}
 
-	// Enforce 100MB file size limit
-	if file.Size > 100*1024*1024 {
-		logEntry.Warn("File size exceeds 100MB limit", map[string]interface{}{
+	maxFileSize := getMaxFileSize()
+	if file.Size > maxFileSize {
+		logEntry.Warn("File size exceeds limit", map[string]interface{}{
 			"filename": file.Filename,
 			"size":     file.Size,
+			"limit":    maxFileSize,
 		})
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File size exceeds 100MB limit"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("File size exceeds %dMB limit", maxFileSize/(1024*1024))})
 		return
 	}
 
@@ -525,8 +538,8 @@ func (lc *LogController) AnalyzeLogFile(c *gin.Context) {
 
 	// Parse options from request body
 	type AnalyzeOptions struct {
-		Timeout  int  `json:"timeout"`
-		Chunking bool `json:"chunking"`
+		Timeout       int  `json:"timeout"`
+		Chunking      bool `json:"chunking"`
 		SmartChunking bool `json:"smartChunking"`
 	}
 	var opts AnalyzeOptions

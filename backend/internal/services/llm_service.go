@@ -1402,3 +1402,28 @@ func (ls *LLMService) InferLogFormatFromSamples(samples []string, logFileID *uin
 
 	return resp, nil
 }
+
+func (ls *LLMService) PullModelWithEndpoint(model, endpoint string) error {
+	url := endpoint + "/api/pull"
+	payload := map[string]string{"name": model}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 300 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Failed to pull model: %s", string(body))
+	}
+	return nil
+}

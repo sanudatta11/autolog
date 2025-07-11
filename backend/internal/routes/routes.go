@@ -61,6 +61,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, stopChan <-chan struct{}) {
 				settings.GET("/llm-endpoint", settingsController.GetLLMEndpoint)
 				settings.POST("/llm-endpoint", settingsController.UpdateLLMEndpoint)
 				settings.POST("/test-llm-endpoint", settingsController.TestLLMEndpoint)
+				settings.GET("/upload-limit", settingsController.GetUploadLimit)
 			}
 
 			// Logs

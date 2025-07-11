@@ -52,6 +52,8 @@ const Logs = () => {
   const [rcaChunking, setRcaChunking] = useState(true);
   const [rcaError, setRcaError] = useState('');
 
+  const [uploadLimit, setUploadLimit] = useState(5 * 1024 * 1024); // Default 5MB
+
   // After logFiles are updated, check if polling should be running
   useEffect(() => {
     let interval = null;
@@ -70,6 +72,19 @@ const Logs = () => {
       if (interval) clearInterval(interval);
     };
   }, [logFiles, pollingEnabled]);
+
+  useEffect(() => {
+    // Fetch upload limit from backend
+    api.get('/settings/upload-limit')
+      .then(res => {
+        if (res.data && res.data.uploadLimit) {
+          setUploadLimit(res.data.uploadLimit);
+        }
+      })
+      .catch(() => {
+        setUploadLimit(5 * 1024 * 1024); // fallback
+      });
+  }, []);
 
   // On mount, fetch logs and user role
   useEffect(() => {
@@ -112,7 +127,7 @@ const Logs = () => {
     }
   };
 
-  const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
+  const MAX_FILE_SIZE_BYTES = uploadLimit;
 
   const handleFileSelect = (event) => {
     const file = event.target.files[0];
@@ -127,7 +142,7 @@ const Logs = () => {
       }
       // Validate file size
       if (file.size > MAX_FILE_SIZE_BYTES) {
-        setMessage({ text: 'File size exceeds 100MB limit', type: 'error' });
+        setMessage({ text: `File size exceeds ${(MAX_FILE_SIZE_BYTES / (1024 * 1024)).toFixed(2)}MB limit`, type: 'error' });
         return;
       }
       

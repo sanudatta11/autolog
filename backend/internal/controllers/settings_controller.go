@@ -3,6 +3,8 @@ package controllers
 import (
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/autolog/backend/internal/logger"
@@ -193,4 +195,66 @@ func (sc *SettingsController) UpdateLLMEndpoint(c *gin.Context) {
 		"llm_endpoint": user.LLMEndpoint,
 	})
 }
- 
+
+// GET /settings/llm-models
+func (sc *SettingsController) GetLLMModels(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	// Get user's LLM endpoint
+	var user models.User
+	if err := sc.db.First(&user, userID).Error; err != nil || user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		c.JSON(400, gin.H{"error": "LLM endpoint not configured"})
+		return
+	}
+	llmService := services.NewLLMServiceWithEndpoint(*user.LLMEndpoint, "codellama:7b")
+	models, err := llmService.GetAvailableModelsWithEndpoint(*user.LLMEndpoint)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"models": models})
+}
+
+// POST /settings/llm-pull-model
+func (sc *SettingsController) PullLLMModel(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Model == "" {
+		c.JSON(400, gin.H{"error": "Model name required"})
+		return
+	}
+	// Get user's LLM endpoint
+	var user models.User
+	if err := sc.db.First(&user, userID).Error; err != nil || user.LLMEndpoint == nil || *user.LLMEndpoint == "" {
+		c.JSON(400, gin.H{"error": "LLM endpoint not configured"})
+		return
+	}
+	llmService := services.NewLLMServiceWithEndpoint(*user.LLMEndpoint, "codellama:7b")
+	err := llmService.PullModelWithEndpoint(req.Model, *user.LLMEndpoint)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true})
+}
+
+// GetUploadLimit returns the current file upload size limit in bytes
+func (sc *SettingsController) GetUploadLimit(c *gin.Context) {
+	maxSizeStr := os.Getenv("MAX_FILE_SIZE")
+	var maxSize int64 = 5 * 1024 * 1024 // Default 5MB
+	if maxSizeStr != "" {
+		if parsed, err := strconv.ParseInt(maxSizeStr, 10, 64); err == nil && parsed > 0 {
+			maxSize = parsed
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"uploadLimit": maxSize})
+}
