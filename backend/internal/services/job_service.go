@@ -241,6 +241,17 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 		timeout = 300 // default fallback
 	}
 
+	// Safely convert chunking from interface{} to bool
+	var chunking bool = true // default to true
+	if chunkingVal, ok := job.Result["chunking"]; ok {
+		switch v := chunkingVal.(type) {
+		case bool:
+			chunking = v
+		default:
+			chunking = true // default fallback
+		}
+	}
+
 	// Safely convert smartChunking from interface{} to bool
 	var smartChunking bool = true // default to true
 	if smartChunkingVal, ok := job.Result["smartChunking"]; ok {
@@ -266,9 +277,80 @@ func (js *JobService) ProcessRCAAnalysisJobWithShutdown(jobID uint, stopChan <-c
 	logger.Info("[RCA] Analysis parameters configured", map[string]interface{}{
 		"jobID":         jobID,
 		"timeout":       timeout,
+		"chunking":      chunking,
 		"smartChunking": smartChunking,
 		"model":         selectedModel,
 	})
+
+	// Check if chunking is disabled - use single LLM call approach
+	if !chunking {
+		logger.Info("[RCA] Chunking disabled, using single LLM call analysis", map[string]interface{}{"jobID": jobID})
+
+		// Load all log entries
+		var entries []models.LogEntry
+		if err := js.db.Where("log_file_id = ?", job.LogFile.ID).Find(&entries).Error; err != nil {
+			logger.Error("[RCA] Failed to load log entries for single analysis", map[string]interface{}{"jobID": jobID, "error": err})
+			js.updateJobStatus(jobID, models.JobStatusFailed, "Failed to load log entries", nil)
+			return
+		}
+
+		// Use single LLM call analysis with user's model and endpoint
+		analysis, err := js.llmService.AnalyzeLogsWithAIWithTimeoutAndModel(job.LogFile, entries, timeout, &jobID, selectedModel, *user.LLMEndpoint)
+		if err != nil {
+			logger.Error("[RCA] Single LLM analysis failed", map[string]interface{}{"jobID": jobID, "error": err})
+			js.updateJobStatus(jobID, models.JobStatusFailed, err.Error(), nil)
+			js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "failed")
+			return
+		}
+
+		// Mark job as completed with single analysis result
+		completedAt := time.Now()
+		finalResult := map[string]interface{}{
+			"final":            analysis,
+			"singleLLMCall":    true,
+			"chunkingDisabled": true,
+			"model":            selectedModel,
+		}
+
+		if err := js.db.Model(&models.Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+			"status":        models.JobStatusCompleted,
+			"progress":      100,
+			"result":        finalResult,
+			"completed_at":  &completedAt,
+			"current_chunk": 0,
+			"total_chunks":  1, // Single chunk for single analysis
+		}).Error; err != nil {
+			logger.Error("Failed to update job completion", map[string]interface{}{"jobID": jobID, "error": err})
+			return
+		}
+
+		// Update log file status
+		if err := js.db.Model(&models.LogFile{}).Where("id = ?", job.LogFileID).Update("rca_analysis_status", "completed").Error; err != nil {
+			logger.Error("Failed to update log file status", map[string]interface{}{"jobID": job.LogFileID, "error": err})
+		}
+
+		// Save analysis and memory
+		js.saveAnalysisAndMemory(jobID, job.LogFile, analysis)
+
+		// Learn from the completed analysis
+		if js.learningService != nil {
+			if err := js.learningService.LearnFromAnalysis(job.LogFile, analysis); err != nil {
+				logger.Error("Failed to learn from RCA analysis", map[string]interface{}{"jobID": jobID, "error": err})
+			} else {
+				logger.Info("Successfully learned from RCA analysis", map[string]interface{}{
+					"jobID":     jobID,
+					"logFileID": job.LogFile.ID,
+				})
+			}
+		}
+
+		completed = true
+		logger.Info("[RCA] Single LLM analysis completed successfully", map[string]interface{}{
+			"jobID":    jobID,
+			"progress": 100,
+		})
+		return
+	}
 
 	logger.Info("[RCA] Starting chunk analysis", map[string]interface{}{"jobID": jobID})
 	partials, err := js.performRCAAnalysisWithErrorTrackingAndChunkCount(job.LogFile, &failedChunk, &totalChunks, jobID, stopChan, jobCancelChan, timeout, smartChunking, selectedModel)

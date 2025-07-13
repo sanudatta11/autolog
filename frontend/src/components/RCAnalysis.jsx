@@ -38,6 +38,87 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
   const [jobFeedbacks, setJobFeedbacks] = useState({}); // { jobId: feedbackObj }
   const [isInitializing, setIsInitializing] = useState(true);
 
+  // Add state for available models and selected model
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [showModelStep, setShowModelStep] = useState(false);
+
+  // Fetch available models on mount
+  useEffect(() => {
+    api.get('/llms').then(res => {
+      setAvailableModels(res.data.models || []);
+    });
+  }, []);
+
+  // Recommendation logic
+  const recommendModel = (options, models) => {
+    if (!models || models.length === 0) return '';
+    // Prefer large-context, high-quality for no chunking
+    if (!options.chunking) {
+      return models.find(m => m.contextWindow >= 16000 && m.quality === 'high')?.name || models[0].name;
+    }
+    // Prefer fast for chunking
+    if (options.chunking) {
+      return models.find(m => m.speed === 'fast')?.name || models[0].name;
+    }
+    return models[0].name;
+  };
+
+  // When chunking/timeout changes, update recommended model
+  useEffect(() => {
+    if (availableModels.length > 0) {
+      const rec = recommendModel({ chunking: useChunking, timeout: llmTimeout }, availableModels);
+      setSelectedModel(rec);
+    }
+  }, [useChunking, llmTimeout, availableModels]);
+
+  // Step 1: User selects chunking/timeout, then clicks Next
+  const handleNextStep = () => {
+    setShowModelStep(true);
+  };
+
+  // Step 2: Model selection step
+  const renderModelStep = () => (
+    <div className="mt-4">
+      <h4 className="font-semibold mb-2">Select LLM Model</h4>
+      <div className="space-y-2">
+        {availableModels.map(model => {
+          const isRecommended = model.name === recommendModel({ chunking: useChunking, timeout: llmTimeout }, availableModels);
+          return (
+            <label key={model.name} className={`flex items-center p-2 border rounded cursor-pointer ${selectedModel === model.name ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+              <input
+                type="radio"
+                name="llmModel"
+                value={model.name}
+                checked={selectedModel === model.name}
+                onChange={() => setSelectedModel(model.name)}
+                className="form-radio mr-2"
+              />
+              <span className="font-medium">{model.name}</span>
+              {isRecommended && (
+                <span className="ml-2 px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-semibold">Recommended</span>
+              )}
+              <span className="ml-2 text-xs text-gray-500">{model.quality} / ctx: {model.contextWindow} / {model.speed}</span>
+            </label>
+          );
+        })}
+      </div>
+      <button
+        className="btn btn-primary mt-4"
+        onClick={() => setShowModelStep(false)}
+      >
+        Back
+      </button>
+      <button
+        className="btn btn-primary mt-4 ml-2"
+        onClick={handleNewRun}
+        disabled={isSubmitting}
+      >
+        {isSubmitting ? 'Starting...' : 'Start RCA Analysis'}
+      </button>
+    </div>
+  );
+
   // Helper to poll job status
   const pollJobStatus = useCallback((jobId) => {
     api.get(`/jobs/${jobId}/status`).then(response => {
@@ -233,32 +314,27 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
     setIsSubmitting(false);
   };
 
-  // Handler to trigger a new RCA run
+  // Update handleNewRun to use selectedModel
   const handleNewRun = async () => {
     setIsSubmitting(true);
     setFeedbackSubmitted(false);
     setError('');
     try {
-      console.log('Starting new RCA run for log file:', logFileId, 'with options:', { timeout: llmTimeout, chunking: useChunking });
       setStatus('pending');
       setProgress(0);
-      
       const response = await api.post(`/logs/${logFileId}/analyze`, {
         timeout: llmTimeout,
         chunking: useChunking,
-        smartChunking: useSmartChunking, // <-- new
+        smartChunking: useSmartChunking,
+        model: selectedModel,
       });
-      
-      console.log('New RCA run response:', response.data);
       setJobId(response.data.jobId);
       setStatus('pending');
       if (shouldPoll()) {
       pollingRef.current = setInterval(() => pollJobStatus(response.data.jobId), POLL_INTERVAL);
       }
-      
       fetchJobs();
     } catch (err) {
-      console.error('New RCA run error:', err);
       setError('Failed to start new RCA analysis');
       setStatus('failed');
     }
@@ -392,17 +468,9 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
         <h2 className="text-lg font-semibold text-gray-900">Root Cause Analysis</h2>
         <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs font-semibold text-gray-700 border border-gray-200">{getStatusText()}</span>
       </div>
-      {/* Advanced Settings Accordion */}
-      <div className="mt-2">
-          <button
-          type="button"
-          className="flex items-center gap-2 text-blue-700 font-medium focus:outline-none"
-          onClick={() => setShowAdvanced((v) => !v)}
-          >
-          <ChevronIcon open={showAdvanced} />
-          {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
-          </button>
-        {showAdvanced && (
+      {!showModelStep ? (
+        <div>
+          {/* Step 1: Chunking/timeout selection */}
           <div className="mt-2 p-4 bg-gray-50 border border-gray-200 rounded-md space-y-3">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">LLM Timeout (seconds)</label>
@@ -462,9 +530,53 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
               </div>
               <div className="text-xs text-gray-500 mt-1">When enabled, only log chunks with ERROR or FATAL entries are analyzed. Disable to include all log lines (may be slower).</div>
             </div>
+            <button className="btn btn-primary mt-4" onClick={handleNextStep}>Next</button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4">
+          <h4 className="font-semibold mb-2">Select LLM Model</h4>
+          <div className="space-y-2">
+            {availableModels.map(model => {
+              const isRecommended = model.name === recommendModel({ chunking: useChunking, timeout: llmTimeout }, availableModels);
+              return (
+                <label key={model.name} className={`flex items-center p-2 border rounded cursor-pointer ${selectedModel === model.name ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+                  <input
+                    type="radio"
+                    name="llmModel"
+                    value={model.name}
+                    checked={selectedModel === model.name}
+                    onChange={() => setSelectedModel(model.name)}
+                    className="form-radio mr-2"
+                  />
+                  <span className="font-medium">{model.name}</span>
+                  {isRecommended && (
+                    <span className="ml-2 px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-semibold">Recommended</span>
+                  )}
+                  <span className="ml-2 text-xs text-gray-500">{model.quality} / ctx: {model.contextWindow} / {model.speed}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowModelStep(false)}
+              type="button"
+            >
+              Back
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleNewRun}
+              disabled={isSubmitting}
+              type="button"
+            >
+              {isSubmitting ? 'Starting...' : 'Start RCA Analysis'}
+            </button>
+          </div>
         </div>
       )}
-      </div>
       {/* Progress percentage and bar if running/pending */}
       {(status === 'pending' || status === 'running') && (
         <>
@@ -717,15 +829,17 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
                   <th className="px-3 py-2 text-left">Error</th>
                   <th className="px-3 py-2 text-left">Started</th>
                   <th className="px-3 py-2 text-left">Completed</th>
-                  <th className="px-3 py-2 text-right">Chunks</th>
-                  <th className="px-3 py-2 text-right">Current Chunk</th>
-                  <th className="px-3 py-2 text-right">Failed Chunk</th>
+                  {/* Conditionally render chunk columns */}
+                  {jobs.some(job => !(job.result?.singleLLMCall || job.result?.chunkingDisabled)) && <th className="px-3 py-2 text-right">Chunks</th>}
+                  {jobs.some(job => !(job.result?.singleLLMCall || job.result?.chunkingDisabled)) && <th className="px-3 py-2 text-right">Current Chunk</th>}
+                  {jobs.some(job => !(job.result?.singleLLMCall || job.result?.chunkingDisabled)) && <th className="px-3 py-2 text-right">Failed Chunk</th>}
                   <th className="px-3 py-2 text-center">Actions</th>
               </tr>
             </thead>
             <tbody>
               {jobs.map((job, idx) => {
                 const hasReview = jobFeedbacks[job.id] !== undefined;
+                const isChunking = !(job.result?.singleLLMCall || job.result?.chunkingDisabled);
                 return (
                   <tr key={job.id} className={`${idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'} ${showResults && results === job.result ? 'ring-2 ring-blue-500 bg-blue-50' : ''}`}>
                     <td className="px-3 py-2">{jobs.length - idx}</td>
@@ -744,9 +858,10 @@ const RCAnalysis = React.memo(({ logFileId, initialStatus = 'idle', onAnalysisCo
                     <td className="px-3 py-2 text-red-700">{job.error || '-'}</td>
                     <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}</td>
                     <td className="px-3 py-2">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '-'}</td>
-                    <td className="px-3 py-2 text-right">{job.totalChunks || '-'}</td>
-                    <td className="px-3 py-2 text-right">{job.currentChunk || '-'}</td>
-                    <td className="px-3 py-2 text-right">{job.failedChunk != null ? job.failedChunk : 0}</td>
+                    {/* Conditionally render chunk columns */}
+                    {isChunking && <td className="px-3 py-2 text-right">{job.totalChunks || '-'}</td>}
+                    {isChunking && <td className="px-3 py-2 text-right">{job.currentChunk || '-'}</td>}
+                    {isChunking && <td className="px-3 py-2 text-right">{job.failedChunk != null ? job.failedChunk : 0}</td>}
                     <td className="px-3 py-2 text-center space-x-1">
                       {job.status === 'completed' && (
                         hasReview ? (

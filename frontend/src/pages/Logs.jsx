@@ -364,16 +364,25 @@ const Logs = () => {
 
     try {
       const response = await fetch(getApiUrl(`/jobs/${jobId}/cancel`), {
-        method: 'POST',
+        method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to cancel RCA analysis');
+        let errorMsg = 'Failed to cancel RCA analysis';
+        try {
+          const errorData = await response.json();
+          errorMsg = errorData.error || errorMsg;
+        } catch (jsonErr) {
+          // Not JSON, try text
+          try {
+            const text = await response.text();
+            errorMsg = text || errorMsg;
+          } catch {}
+        }
+        throw new Error(errorMsg);
       }
 
       // Show success message

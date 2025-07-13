@@ -286,8 +286,8 @@ func (ls *LLMService) AnalyzeLogsWithAI(logFile *models.LogFile, entries []model
 	return analysis, nil
 }
 
-// AnalyzeLogsWithAIWithTimeout performs AI-powered analysis of log entries with focus on errors, with a per-request timeout.
-func (ls *LLMService) AnalyzeLogsWithAIWithTimeout(logFile *models.LogFile, entries []models.LogEntry, timeout int, jobID *uint) (*LogAnalysisResponse, error) {
+// AnalyzeLogsWithAIWithTimeoutAndModel performs AI-powered analysis of log entries with focus on errors, with a per-request timeout and specific model.
+func (ls *LLMService) AnalyzeLogsWithAIWithTimeoutAndModel(logFile *models.LogFile, entries []models.LogEntry, timeout int, jobID *uint, model string, endpoint string) (*LogAnalysisResponse, error) {
 	logEntry := logger.WithLLM(&logFile.ID, jobID, "rca_analysis_timeout")
 
 	if logFile == nil {
@@ -307,6 +307,8 @@ func (ls *LLMService) AnalyzeLogsWithAIWithTimeout(logFile *models.LogFile, entr
 		"error_entries": len(errorEntries),
 		"total_entries": len(entries),
 		"timeout":       timeout,
+		"model":         model,
+		"endpoint":      endpoint,
 	})
 
 	request := LogAnalysisRequest{
@@ -320,7 +322,16 @@ func (ls *LLMService) AnalyzeLogsWithAIWithTimeout(logFile *models.LogFile, entr
 		request.EndTime = errorEntries[len(errorEntries)-1].Timestamp
 	}
 	prompt := ls.createDetailedErrorAnalysisPrompt(request, errorEntries, "")
-	response, err := ls.callLLMWithContextAndTimeout(prompt, &logFile.ID, jobID, "rca_analysis", timeout)
+
+	// Use the specified model and endpoint if provided, otherwise use the default timeout method
+	var response string
+	var err error
+	if model != "" && endpoint != "" {
+		response, err = ls.callLLMWithEndpointAndTimeout(context.Background(), prompt, endpoint, &logFile.ID, jobID, "rca_analysis_timeout", timeout, model)
+	} else {
+		response, err = ls.callLLMWithContextAndTimeout(prompt, &logFile.ID, jobID, "rca_analysis", timeout)
+	}
+
 	if err != nil {
 		logger.WithError(err, "llm_service").Error("LLM analysis failed")
 		return nil, fmt.Errorf("LLM analysis failed: %w", err)
